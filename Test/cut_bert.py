@@ -19,7 +19,7 @@ def truncate_list(lst, length):
             for i in range(0, len(item), length):
                 new_lst.append(item[i:i + length])
     return new_lst
-
+#456
 
 def bytecode_to_opcodes(bytecode):
     bytecode = bytecode.replace("0x", "")
