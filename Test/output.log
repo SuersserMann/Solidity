@@ -1,0 +1,45 @@
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): huggingface.co:443
+DEBUG:urllib3.connectionpool:https://huggingface.co:443 "HEAD /bert-base-uncased/resolve/main/config.json HTTP/1.1" 200 0
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): huggingface.co:443
+DEBUG:urllib3.connectionpool:https://huggingface.co:443 "GET /api/datasets/mwritescode/slither-audited-smart-contracts HTTP/1.1" 200 2121
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): s3.amazonaws.com:443
+DEBUG:urllib3.connectionpool:https://s3.amazonaws.com:443 "HEAD /datasets.huggingface.co/datasets/datasets/mwritescode/slither-audited-smart-contracts/mwritescode/slither-audited-smart-contracts.py HTTP/1.1" 404 0
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): huggingface.co:443
+DEBUG:urllib3.connectionpool:https://huggingface.co:443 "HEAD /datasets/mwritescode/slither-audited-smart-contracts/resolve/main/slither-audited-smart-contracts.py HTTP/1.1" 200 0
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): huggingface.co:443
+DEBUG:urllib3.connectionpool:https://huggingface.co:443 "HEAD /datasets/mwritescode/slither-audited-smart-contracts/resolve/main/dataset_infos.json HTTP/1.1" 200 0
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): huggingface.co:443
+DEBUG:urllib3.connectionpool:https://huggingface.co:443 "HEAD /datasets/mwritescode/slither-audited-smart-contracts/resolve/main/README.md HTTP/1.1" 200 0
+DEBUG:fsspec.local:open file: C:/Users/13663/.cache/huggingface/datasets/mwritescode___slither-audited-smart-contracts/big-multilabel/1.1.0/4cf503b59ce9d3157914e47f6253de773b7ab828f46642685d4b470b88ca1f13/dataset_info.json
+WARNING:datasets.builder:Found cached dataset slither-audited-smart-contracts (C:/Users/13663/.cache/huggingface/datasets/mwritescode___slither-audited-smart-contracts/big-multilabel/1.1.0/4cf503b59ce9d3157914e47f6253de773b7ab828f46642685d4b470b88ca1f13)
+DEBUG:fsspec.local:open file: C:/Users/13663/.cache/huggingface/datasets/mwritescode___slither-audited-smart-contracts/big-multilabel/1.1.0/4cf503b59ce9d3157914e47f6253de773b7ab828f46642685d4b470b88ca1f13/dataset_info.json
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): huggingface.co:443
+DEBUG:urllib3.connectionpool:https://huggingface.co:443 "GET /api/datasets/mwritescode/slither-audited-smart-contracts HTTP/1.1" 200 2121
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): s3.amazonaws.com:443
+DEBUG:urllib3.connectionpool:https://s3.amazonaws.com:443 "HEAD /datasets.huggingface.co/datasets/datasets/mwritescode/slither-audited-smart-contracts/mwritescode/slither-audited-smart-contracts.py HTTP/1.1" 404 0
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): huggingface.co:443
+DEBUG:urllib3.connectionpool:https://huggingface.co:443 "HEAD /datasets/mwritescode/slither-audited-smart-contracts/resolve/main/slither-audited-smart-contracts.py HTTP/1.1" 200 0
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): huggingface.co:443
+DEBUG:urllib3.connectionpool:https://huggingface.co:443 "HEAD /datasets/mwritescode/slither-audited-smart-contracts/resolve/main/dataset_infos.json HTTP/1.1" 200 0
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): huggingface.co:443
+DEBUG:urllib3.connectionpool:https://huggingface.co:443 "HEAD /datasets/mwritescode/slither-audited-smart-contracts/resolve/main/README.md HTTP/1.1" 200 0
+DEBUG:fsspec.local:open file: C:/Users/13663/.cache/huggingface/datasets/mwritescode___slither-audited-smart-contracts/big-multilabel/1.1.0/4cf503b59ce9d3157914e47f6253de773b7ab828f46642685d4b470b88ca1f13/dataset_info.json
+WARNING:datasets.builder:Found cached dataset slither-audited-smart-contracts (C:/Users/13663/.cache/huggingface/datasets/mwritescode___slither-audited-smart-contracts/big-multilabel/1.1.0/4cf503b59ce9d3157914e47f6253de773b7ab828f46642685d4b470b88ca1f13)
+DEBUG:fsspec.local:open file: C:/Users/13663/.cache/huggingface/datasets/mwritescode___slither-audited-smart-contracts/big-multilabel/1.1.0/4cf503b59ce9d3157914e47f6253de773b7ab828f46642685d4b470b88ca1f13/dataset_info.json
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): huggingface.co:443
+DEBUG:urllib3.connectionpool:https://huggingface.co:443 "GET /api/datasets/mwritescode/slither-audited-smart-contracts HTTP/1.1" 200 2121
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): s3.amazonaws.com:443
+DEBUG:urllib3.connectionpool:https://s3.amazonaws.com:443 "HEAD /datasets.huggingface.co/datasets/datasets/mwritescode/slither-audited-smart-contracts/mwritescode/slither-audited-smart-contracts.py HTTP/1.1" 404 0
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): huggingface.co:443
+DEBUG:urllib3.connectionpool:https://huggingface.co:443 "HEAD /datasets/mwritescode/slither-audited-smart-contracts/resolve/main/slither-audited-smart-contracts.py HTTP/1.1" 200 0
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): huggingface.co:443
+DEBUG:urllib3.connectionpool:https://huggingface.co:443 "HEAD /datasets/mwritescode/slither-audited-smart-contracts/resolve/main/dataset_infos.json HTTP/1.1" 200 0
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): huggingface.co:443
+DEBUG:urllib3.connectionpool:https://huggingface.co:443 "HEAD /datasets/mwritescode/slither-audited-smart-contracts/resolve/main/README.md HTTP/1.1" 200 0
+DEBUG:fsspec.local:open file: C:/Users/13663/.cache/huggingface/datasets/mwritescode___slither-audited-smart-contracts/big-multilabel/1.1.0/4cf503b59ce9d3157914e47f6253de773b7ab828f46642685d4b470b88ca1f13/dataset_info.json
+WARNING:datasets.builder:Found cached dataset slither-audited-smart-contracts (C:/Users/13663/.cache/huggingface/datasets/mwritescode___slither-audited-smart-contracts/big-multilabel/1.1.0/4cf503b59ce9d3157914e47f6253de773b7ab828f46642685d4b470b88ca1f13)
+DEBUG:fsspec.local:open file: C:/Users/13663/.cache/huggingface/datasets/mwritescode___slither-audited-smart-contracts/big-multilabel/1.1.0/4cf503b59ce9d3157914e47f6253de773b7ab828f46642685d4b470b88ca1f13/dataset_info.json
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): huggingface.co:443
+DEBUG:urllib3.connectionpool:https://huggingface.co:443 "HEAD /bert-base-uncased/resolve/main/vocab.txt HTTP/1.1" 200 0
+INFO:root:正在训练模型，学习率：1e-05，训练周期：1
+INFO:root:第0轮训练, loss：0.7024989724159241, 第0次训练集F1准确率为:0.2954166666666666

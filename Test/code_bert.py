@@ -10,7 +10,6 @@ from transformers import BertModel
 from pyevmasm import disassemble_hex
 
 
-
 def truncate_list(lst, length):
     new_lst = []
     for item in lst:
@@ -129,20 +128,20 @@ def collate_fn(data):
     labels = [i[2] for i in data]
     amount = 0
     cutted_list = []
-    cut_labels=[]
+    cut_labels = []
     for i, cut_bytecode in enumerate(bytecodes):
-        new_labels=[]
+        new_labels = []
 
         new_labels.append(cut_bytecode)
-        cutted = truncate_list(new_labels, 2048 )
+        cutted = truncate_list(new_labels, 2048)
         for gg in cutted:
             cutted_list.append(gg)
 
         for dd in range(len(cutted)):
-            cut_labels.insert(i+amount, labels[i])
-        amount+=len(cutted)
-    labels=cut_labels
-    bytecodes=cutted_list
+            cut_labels.insert(i + amount, labels[i])
+        amount += len(cutted)
+    labels = cut_labels
+    bytecodes = cutted_list
     # 编码
     data = token.batch_encode_plus(
         # source_codes,
@@ -161,14 +160,14 @@ def collate_fn(data):
 
     input_ids = data['input_ids'].to(device)
     attention_mask = data['attention_mask'].to(device)
-    #token_type_ids = data['token_type_ids'].to(device)
+    # token_type_ids = data['token_type_ids'].to(device)
 
     # 将 labels 转换为多标签格式
     labels_tensor = torch.zeros(len(labels), 6).to(device)
     for i, label in enumerate(labels):
         labels_tensor[i][label] = 1
 
-    return input_ids, attention_mask,  labels_tensor
+    return input_ids, attention_mask, labels_tensor
 
 
 # 数据加载器
@@ -201,7 +200,7 @@ def train_model(learning_rate, num_epochs):
 
     for epoch in range(num_epochs):
         model.train()
-        for i, (input_ids, attention_mask,  labels) in enumerate(train_loader):
+        for i, (input_ids, attention_mask, labels) in enumerate(train_loader):
             # 遍历数据集，并将数据转移到GPU上
             out = model(input_ids=input_ids, attention_mask=attention_mask)
             # 进行前向传播，得到预测值out
@@ -348,7 +347,6 @@ for lr in learning_rates:
             best_hyperparams = {'learning_rate': lr, 'num_epochs': num_epochs}
 
 print(f"最佳超参数：{best_hyperparams}，测试集 F1 分数：{best_test_f1}")
-
 
 
 def train_and_save_best_model(best_hyperparams, save_path):
