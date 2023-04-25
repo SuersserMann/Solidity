@@ -1,17 +1,15 @@
 import re
-
 import torch
+import torch.nn as nn
 from datasets import load_dataset
 from transformers import BertTokenizer, AutoModel, AutoTokenizer
-import numpy as np
-from sklearn.metrics import f1_score
-# 从transformers调用现有的model
 from transformers import BertModel
 from pyevmasm import disassemble_hex
 import sys
 import os
 import datetime
-
+import torch.optim as optim
+from torch.nn.parallel import DataParallel
 class Logger(object):
     def __init__(self, filename):
         self.terminal = sys.stdout

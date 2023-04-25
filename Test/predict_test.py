@@ -40,35 +40,19 @@ def predict_slither_label(text):
         out = model(input_ids=input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids)
 
     out = torch.sigmoid(out)  # 将预测值转化为概率
-    out = torch.where(out > 0.5, torch.ones_like(out), torch.zeros_like(out))  # 找到概率大于0.5的位置，并将其设为1，否则设为0
+    #out = torch.where(out > 0.3, torch.ones_like(out), torch.zeros_like(out))  # 找到概率大于0.5的位置，并将其设为1，否则设为0
     predicted_labels = []
     for j in range(len(out)):
-        predicted_label = torch.where(out[j] == 1)[0].tolist()  # 将位置索引转换为标签
-        predicted_labels.append(predicted_label)
+        label_probs = {}
+        for i in range(out.shape[1]):
+            label_probs[slither[i]] = out[j][i].item()
+        predicted_labels.append(label_probs)
 
-
-    pred_label = predicted_labels  # use the indices to look up the corresponding labels in the `slither` variable
-
-    return pred_label
+    return predicted_labels
 
 
 while True:
-    print("请选择输入类型：")
-    print("1. Source Code")
-    print("2. Bytecode")
-    print("3. 退出")
-    choice = input("输入选项（1/2/3）：")
 
-    if choice == '1':
-        input_text = input("请输入Source Code：")
-    elif choice == '2':
-        input_text = input("请输入Bytecode：")
-    elif choice == '3':
-        print("退出程序")
-        break
-    else:
-        print("无效的输入，请重新输入。")
-        continue
-
+    input_text = input("请输入数据：")
     predicted_label = predict_slither_label(input_text)
     print(f"Predicted slither label: {predicted_label}\n")
