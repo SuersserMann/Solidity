@@ -152,9 +152,11 @@ def delete_comment(java_code):
 
 
 def collate_fn(data):
+
     source_codes = [delete_comment(i[0]) for i in data]
     bytecodes = [bytecode_to_opcodes(i[1]) for i in data]
     labels = [i[2] for i in data]
+    print(labels)
     # amount = 0
     # cutted_list = []
     # cut_labels = []

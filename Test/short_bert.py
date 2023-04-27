@@ -85,7 +85,7 @@ class Model(torch.nn.Module):
     def __init__(self):
         super().__init__()
         # 定义一个全连接层，输入维度为768，输出维度为6
-        self.fc = torch.nn.Linear(768, 6)
+        self.fc = torch.nn.Linear(768, 3)
         '''self.fc = torch.nn.Sequential(
             torch.nn.Linear(768, 100),
             torch.nn.ReLU(),
@@ -108,59 +108,42 @@ model.to(device)
 
 
 # 定义数据集
-class Dataset(torch.utils.data.Dataset):
-    def __init__(self, split):
-        self.dataset = load_dataset("mwritescode/slither-audited-smart-contracts", 'big-multilabel', split=split,
-                                    verification_mode='no_checks')
-        # 从huggingface导入数据集
+# class Dataset(torch.utils.data.Dataset):
+#     def __init__(self, split):
+#         self.dataset = load_dataset("mwritescode/slither-audited-smart-contracts", 'big-multilabel', split=split,
+#                                     verification_mode='no_checks')
+#         # 从huggingface导入数据集
+#
+#     def __len__(self):
+#         return len(self.dataset)
+#         # 计算数据集长度，方便后面进行一个批量的操作
+#
+#     def __getitem__(self, i):
+#         source_code = self.dataset[i]['source_code']
+#         bytecode = self.dataset[i]['bytecode']
+#         label = self.dataset[i]['slither']
+#         # 从数据集遍历数据，比如第一批是16个，那么第二批就可以从17-32
+#         return source_code, bytecode, label
 
-    def __len__(self):
-        return len(self.dataset)
-        # 计算数据集长度，方便后面进行一个批量的操作
 
-    def __getitem__(self, i):
-        source_code = self.dataset[i]['source_code']
-        bytecode = self.dataset[i]['bytecode']
-        label = self.dataset[i]['slither']
-        # 从数据集遍历数据，比如第一批是16个，那么第二批就可以从17-32
-        return source_code, bytecode, label
-
-
-train_dataset = Dataset('train')
-val_dataset = Dataset('validation')
-test_dataset = Dataset('test')
+# train_dataset = Dataset('train')
+# val_dataset = Dataset('validation')
+# test_dataset = Dataset('test')
 import pandas as pd
-from torch.utils.data import Dataset
+import datasets
 
-# 读取数据
+# 从 Excel 文件中读取数据
 data = pd.read_excel('123.xlsx')
 
-# 将数据存储到 DataFrame 中
-df = pd.DataFrame(data)
+# 将数据存储到 DataFrame 中，并选择需要的列
+df = pd.DataFrame(data, columns=['slither', 'source_code'])
 
-# 创建新数据
-new_data = {'address': 'new_address', 'source_code': 'new_source_code', 'bytecode': 'new_bytecode',
-            'slither': 'new_slither'}
-
-# 在 DataFrame 的最前面插入新数据
-
-df = pd.concat([pd.DataFrame([new_data]), df], ignore_index=True)
+# 将 DataFrame 转换为 Dataset 对象
+train_dataset = datasets.Dataset.from_pandas(df)
+train_dataset = [[train_dataset['slither'][i], train_dataset['source_code'][i]] for i in range(len(train_dataset))]
+# 打印 Dataset 的信息
 
 
-# 转换为 dataset 数据集
-class MyDataset(Dataset):
-    def __init__(self, data):
-        self.data = data
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        return self.data.iloc[idx].values
-
-
-train_dataset = MyDataset(df)
-train_dataset.data = train_dataset.data.iloc[1:]
 len(train_dataset), train_dataset[0]
 
 # 加载字典和分词工具
@@ -182,20 +165,13 @@ def delete_comment(java_code):
 
     # 用空字符串替换掉 Java 代码中的注释
     return regex.sub(replace, java_code)
-import pandas as pd
-
-# 读取 Excel 文件
-data_excel = pd.read_excel('example.xlsx')
-# 获取前10个数据的第一列
-#first_col = list(data_excel.iloc[:48, 0])
-#second_col=list(data_excel.iloc[:50, 1])
-#third_col=list(data_excel.iloc[:50, 2])
 
 def collate_fn(data):
 
-    source_codes = [delete_comment(i[0]) for i in data]
+    source_codes = [delete_comment(i[1]) for i in data]
     #bytecodes = [bytecode_to_opcodes(i[1]) for i in data]
-    labels = [i[2] for i in data]
+    labels = [i[0] for i in data]
+    labels = [[label] for label in labels]
 
     # amount = 0
     # cutted_list = []
@@ -250,7 +226,7 @@ def collate_fn(data):
     # token_type_ids = data['token_type_ids'].to(device)
 
     # 将 labels 转换为多标签格式
-    labels_tensor = torch.zeros(len(labels), 6).to(device)
+    labels_tensor = torch.zeros(len(labels), 3).to(device)
     for i, label in enumerate(labels):
         labels_tensor[i][label] = 1
 
@@ -261,16 +237,16 @@ def collate_fn(data):
 train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
                                            batch_size=4,  # 是每个批次的大小，也就是每次处理的样本数量。
                                            collate_fn=collate_fn,  # 是一个函数，用于对每个批次中的样本进行编码和处理。
-                                           shuffle=False,  # 是一个布尔值，表示是否对数据进行随机重排。
+                                           shuffle=True,  # 是一个布尔值，表示是否对数据进行随机重排。
                                            drop_last=True)  # 是一个布尔值，表示是否在最后一个批次中舍弃不足一个批次大小的数据
 
-test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
+test_loader = torch.utils.data.DataLoader(dataset=train_dataset,
                                           batch_size=4,  # 是每个批次的大小，也就是每次处理的样本数量。
                                           collate_fn=collate_fn,  # 是一个函数，用于对每个批次中的样本进行编码和处理。
                                           shuffle=False,  # 是一个布尔值，表示是否对数据进行随机重排。
                                           drop_last=True)  # 是一个布尔值，表示是否在最后一个批次中舍弃不足一个批次大小的数据
 
-val_loader = torch.utils.data.DataLoader(dataset=val_dataset,
+val_loader = torch.utils.data.DataLoader(dataset=train_dataset,
                                          batch_size=4,  # 是每个批次的大小，也就是每次处理的样本数量。
                                          collate_fn=collate_fn,  # 是一个函数，用于对每个批次中的样本进行编码和处理。
                                          shuffle=False,  # 是一个布尔值，表示是否对数据进行随机重排。
@@ -342,8 +318,7 @@ def train_model(learning_rate, num_epochs):
                 for j in range(len(out)):
                     predicted_label = torch.where(out[j] == 1)[0].tolist()  # 将位置索引转换为标签
                     predicted_labels.append(predicted_label)
-                    True_label = train_dataset[i * 5 + j][2]
-                    True_label = sorted(True_label)
+                    True_label = torch.where(labels[j] == 1)[0].tolist()
                     True_labels.append(True_label)
 
                     # 计算F1分数
@@ -387,8 +362,7 @@ def train_model(learning_rate, num_epochs):
             for j in range(len(out)):
                 predicted_label = torch.where(out[j] == 1)[0].tolist()  # 将位置索引转换为标签
                 predicted_labels.append(predicted_label)
-                True_label = train_dataset[i * 5 + j][2]
-                True_label = sorted(True_label)
+                True_label = torch.where(labels[j] == 1)[0].tolist()
                 True_labels.append(True_label)
 
                 # 计算F1分数
@@ -412,7 +386,7 @@ def train_model(learning_rate, num_epochs):
                 break
     print(f"测试集 F1 分数：{average_test_f1}")
 
-    return average_test_f1
+
 
 
 # 定义一个超参数空间，用于搜索最佳超参数
