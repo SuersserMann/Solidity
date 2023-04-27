@@ -1,16 +1,13 @@
 import re
-
 import torch
 from datasets import load_dataset
 from transformers import BertTokenizer, AutoModel, AutoTokenizer
-import numpy as np
-from sklearn.metrics import f1_score
-# 从transformers调用现有的model
 from transformers import BertModel
 from pyevmasm import disassemble_hex
 import sys
 import os
 import datetime
+
 
 class Logger(object):
     def __init__(self, filename):
@@ -25,6 +22,7 @@ class Logger(object):
     def flush(self):
         pass
 
+
 now = datetime.datetime.now()
 filename = "log_{:%Y-%m-%d_%H-%M-%S}.txt".format(now)
 path = os.path.abspath(os.path.dirname(__file__))
@@ -35,6 +33,7 @@ if not os.path.exists(log_dir_path):
     os.makedirs(log_dir_path)
 
 sys.stdout = Logger(log_file_path)
+
 
 def truncate_list(lst, length):
     new_lst = []
@@ -49,8 +48,8 @@ def truncate_list(lst, length):
 
 def bytecode_to_opcodes(bytecode):
     bytecode = bytecode.replace("0x", "")
-    bytecode = bytecode.replace("\n", "")
     disassembled = disassemble_hex(bytecode)
+    disassembled = disassemble_hex(bytecode).replace("\n", " ")
     return disassembled
 
 
@@ -90,7 +89,8 @@ class Model(torch.nn.Module):
         '''self.fc = torch.nn.Sequential(
             torch.nn.Linear(768, 100),
             torch.nn.ReLU(),
-            torch.nn.Linear(100, 6)'''#添加多层神经网络
+            torch.nn.Linear(100, 6)'''  # 添加多层神经网络
+
     def forward(self, input_ids, attention_mask):
         # 将输入传入预训练模型，并记录计算图以计算梯度
         out = pretrained(input_ids=input_ids,
@@ -127,7 +127,6 @@ class Dataset(torch.utils.data.Dataset):
 
 
 train_dataset = Dataset('train')
-# 只截取训练集
 len(train_dataset), train_dataset[0]
 val_dataset = Dataset('validation')
 test_dataset = Dataset('test')
@@ -156,13 +155,29 @@ def collate_fn(data):
     source_codes = [delete_comment(i[0]) for i in data]
     bytecodes = [bytecode_to_opcodes(i[1]) for i in data]
     labels = [i[2] for i in data]
+    # amount = 0
+    # cutted_list = []
+    # cut_labels = []
+    # for i, cut_bytecode in enumerate(bytecodes):
+    #     new_labels = []
+    #
+    #     new_labels.append(cut_bytecode)
+    #     cutted = truncate_list(new_labels, 2048)
+    #     for gg in cutted:
+    #         cutted_list.append(gg)
+    #
+    #     for dd in range(len(cutted)):
+    #         cut_labels.insert(i + amount, labels[i])
+    #     amount += len(cutted)
+    # labels = cut_labels
+    # bytecodes = cutted_list
     amount = 0
     cutted_list = []
     cut_labels = []
-    for i, cut_bytecode in enumerate(bytecodes):
+    for i, cut_sourcecode in enumerate(source_codes):
         new_labels = []
 
-        new_labels.append(cut_bytecode)
+        new_labels.append(cut_sourcecode)
         cutted = truncate_list(new_labels, 2048)
         for gg in cutted:
             cutted_list.append(gg)
@@ -171,11 +186,11 @@ def collate_fn(data):
             cut_labels.insert(i + amount, labels[i])
         amount += len(cutted)
     labels = cut_labels
-    bytecodes = cutted_list
+    source_codes= cutted_list
     # 编码
     data = token.batch_encode_plus(
-        # source_codes,
-        bytecodes,
+        source_codes,
+        #bytecodes,
         padding='max_length',
         truncation=True,
         max_length=512,
@@ -267,19 +282,16 @@ def train_model(learning_rate, num_epochs):
             if i % 10 == 0:
                 print(f"predicted_labels：{predicted_labels}", '\n', f"True_labels：{True_labels}")
                 print(f"第{i}轮训练, loss：{loss.item()}, 第{i}次训练集F1准确率为:{f2}")
-
+            if i == 10:
+                break
         # 验证
         model.eval()
-
+        f1 = 0
+        f2 = 0
         with torch.no_grad():
-            for i, (input_ids, attention_mask, token_type_ids, labels) in enumerate(val_loader):
-                out = model(input_ids=input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids)
-                # 进行前向传播，得到预测值out
+            for i, (input_ids, attention_mask, labels) in enumerate(val_loader):
+                out = model(input_ids=input_ids, attention_mask=attention_mask)
                 loss = criterion(out, labels.float())  # 计算损失
-                loss.backward()  # 反向传播，计算梯度
-                optimizer.step()  # 更新参数
-                optimizer.zero_grad()  # 梯度清零，防止梯度累积
-
                 out = torch.sigmoid(out)  # 将预测值转化为概率
                 out = torch.where(out > 0.5, torch.ones_like(out), torch.zeros_like(out))  # 找到概率大于0.5的位置，并将其设为1，否则设为0
                 predicted_labels = []
@@ -302,27 +314,29 @@ def train_model(learning_rate, num_epochs):
                     precision = TP / (TP + FP) if TP + FP else 0
                     recall = TP / (TP + FN) if TP + FN else 0
                     f1 = calculate_f1(precision, recall)
-
-                    f2 = f1 + f2
+                f2 = f1 + f2
                 average_val_f1 = f2 / len(out)
                 if i % 10 == 0:
                     print(f"predicted_labels：{predicted_labels}", '\n', f"True_labels：{True_labels}")
                     print(f"第{i}轮训练, loss：{loss.item()}, 第{i}次验证集F1准确率为:{average_val_f1}")
-
-        # 如果当前模型在验证集上的性能更好，则保存模型参数
+                if i == 10:
+                    break
+                # 如果当前模型在验证集上的性能更好，则保存模型参数
         if average_val_f1 > best_val_f1:
             best_val_f1 = average_val_f1
             best_model_state = model.state_dict()
-
+        else:
+            break
     # 加载具有最佳验证集性能的模型参数
     model.load_state_dict(best_model_state)
-
     # 测试
     model.eval()
-
+    f1 = 0
+    f2 = 0
     with torch.no_grad():
-        for i, (input_ids, attention_mask, token_type_ids, labels) in enumerate(test_loader):
-
+        for i, (input_ids, attention_mask, labels) in enumerate(test_loader):
+            out = model(input_ids=input_ids, attention_mask=attention_mask)
+            loss = criterion(out, labels.float())  # 计算损失
             out = torch.sigmoid(out)  # 将预测值转化为概率
             out = torch.where(out > 0.5, torch.ones_like(out), torch.zeros_like(out))  # 找到概率大于0.5的位置，并将其设为1，否则设为0
             predicted_labels = []
@@ -346,21 +360,22 @@ def train_model(learning_rate, num_epochs):
                 recall = TP / (TP + FN) if TP + FN else 0
                 f1 = calculate_f1(precision, recall)
 
-                f2 = f1 + f2
+            f2 = f1 + f2
             average_test_f1 = f2 / len(out)
 
             if i % 10 == 0:
                 print(f"predicted_labels：{predicted_labels}", '\n', f"True_labels：{True_labels}")
                 print(f"第{i}轮训练, loss：{loss.item()}, 第{i}次测试集F1准确率为:{average_test_f1}")
-
+            if i == 10:
+                break
     print(f"测试集 F1 分数：{average_test_f1}")
 
     return average_test_f1
 
 
 # 定义一个超参数空间，用于搜索最佳超参数
-learning_rates = [1e-5, 3e-5, 1e-4]
-num_epochs_list = [1, 2, 3]
+learning_rates = [1e-5,3e-5,1e-4]
+num_epochs_list = [1,2,3]
 
 best_hyperparams = None
 best_test_f1 = 0
@@ -372,7 +387,7 @@ for lr in learning_rates:
 
         test_f1 = train_model(lr, num_epochs)
 
-        if test_f1 > best_test_f1:
+        if test_f1 >= best_test_f1:
             best_test_f1 = test_f1
             best_hyperparams = {'learning_rate': lr, 'num_epochs': num_epochs}
 

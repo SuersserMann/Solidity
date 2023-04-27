@@ -127,6 +127,10 @@ def train_model(learning_rate, num_epochs):
     best_model_state = None
 
     for epoch in range(num_epochs):
+        if torch.cuda.device_count() > 1:
+            dist.init_process_group(backend='nccl', init_method='tcp://localhost:8888',
+                                    world_size=torch.cuda.device_count(),
+                                    rank=torch.cuda.current_device())
         model.train()
         for i, (input_ids, attention_mask, labels) in enumerate(train_loader):
 

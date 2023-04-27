@@ -1,15 +1,16 @@
 import re
+
 import torch
-import torch.nn as nn
 from datasets import load_dataset
 from transformers import BertTokenizer, AutoModel, AutoTokenizer
+import numpy as np
+from sklearn.metrics import f1_score
+# 从transformers调用现有的model
 from transformers import BertModel
 from pyevmasm import disassemble_hex
 import sys
 import os
 import datetime
-import torch.nn.parallel
-import torch.distributed as dist
 
 class Logger(object):
     def __init__(self, filename):
@@ -63,15 +64,9 @@ def calculate_f1(precision, recall):
 
 print(torch.__version__)
 
-# 检查是否存在可用的GPU设备
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-if torch.cuda.device_count() < 2:
-    print('device=', device)
-else:
-    print("使用", torch.cuda.device_count(), "张GPU进行训练")
-
-
+# 使用cuda
+device = 'cuda' if torch.cuda.is_available() else 'cpu'  # 如果是cuda则调用cuda反之则cpu
+print('device=', device)
 
 # 加载预训练模型，使用预训练模型可以加快训练的速度
 pretrained = AutoModel.from_pretrained("microsoft/codebert-base")
@@ -106,12 +101,12 @@ class Model(torch.nn.Module):
 
         return out
 
+
+# 实例化下游任务模型并将其移动到 GPU 上 (如果可用)
 model = Model()
 model.to(device)
 
-if torch.cuda.device_count() > 1:
-    print("使用", torch.cuda.device_count(), f"{torch.cuda.device_count()}张GPU并行训练")
-    model = torch.nn.DataParallel(model)
+
 # 定义数据集
 class Dataset(torch.utils.data.Dataset):
     def __init__(self, split):
@@ -131,17 +126,13 @@ class Dataset(torch.utils.data.Dataset):
         return source_code, bytecode, label
 
 
-train_dataset = Dataset('train')[:10000]
-# 只截取训练集
+train_dataset = Dataset('train')
 len(train_dataset), train_dataset[0]
-val_dataset = Dataset('validation')[:2000]
-test_dataset = Dataset('test')[:2000]
+val_dataset = Dataset('validation')
+test_dataset = Dataset('test')
 # 加载字典和分词工具
 token = AutoTokenizer.from_pretrained("microsoft/codebert-base")
 
-# 初始化分布式训练
-if torch.cuda.device_count() > 1:
-    dist.init_process_group(backend='nccl', init_method='tcp://localhost:127.0.0.1:8888', world_size=torch.cuda.device_count(), rank=0)
 
 def delete_comment(java_code):
     # 用正则表达式匹配 Java 代码中的注释
@@ -161,7 +152,7 @@ def delete_comment(java_code):
 
 
 def collate_fn(data):
-    source_codes = [delete_comment(i[0]) for i in data]
+    #source_codes = [delete_comment(i[0]) for i in data]
     bytecodes = [bytecode_to_opcodes(i[1]) for i in data]
     labels = [i[2] for i in data]
     amount = 0
@@ -196,27 +187,24 @@ def collate_fn(data):
     # `token_type_ids`: BERT 能够区分两个句子的方法（第一句话000..第二句话111...）。
     # `length`: 编码后序列的长度
 
-
     input_ids = data['input_ids'].to(device)
     attention_mask = data['attention_mask'].to(device)
     # token_type_ids = data['token_type_ids'].to(device)
 
     # 将 labels 转换为多标签格式
     labels_tensor = torch.zeros(len(labels), 6).to(device)
-
     for i, label in enumerate(labels):
         labels_tensor[i][label] = 1
 
     return input_ids, attention_mask, labels_tensor
 
-train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+
 # 数据加载器
 train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
                                            batch_size=4,  # 是每个批次的大小，也就是每次处理的样本数量。
                                            collate_fn=collate_fn,  # 是一个函数，用于对每个批次中的样本进行编码和处理。
                                            shuffle=True,  # 是一个布尔值，表示是否对数据进行随机重排。
-                                           drop_last=True,# 是一个布尔值，表示是否在最后一个批次中舍弃不足一个批次大小的数据
-                                           sampler=train_sampler)
+                                           drop_last=True)  # 是一个布尔值，表示是否在最后一个批次中舍弃不足一个批次大小的数据
 
 test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
                                           batch_size=4,  # 是每个批次的大小，也就是每次处理的样本数量。
@@ -232,11 +220,6 @@ val_loader = torch.utils.data.DataLoader(dataset=val_dataset,
 
 
 def train_model(learning_rate, num_epochs):
-    # 初始化分布式训练
-    if torch.cuda.device_count() > 1:
-        dist.init_process_group(backend='nccl', init_method='tcp://localhost:8888',
-                                world_size=torch.cuda.device_count(),
-                                rank=torch.cuda.current_device())
     # 训练
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)  # 使用传入的学习率
     criterion = torch.nn.BCEWithLogitsLoss()
@@ -245,7 +228,6 @@ def train_model(learning_rate, num_epochs):
     best_model_state = None  # 保存最佳模型参数
 
     for epoch in range(num_epochs):
-        train_sampler.set_epoch(epoch)
         model.train()
         for i, (input_ids, attention_mask, labels) in enumerate(train_loader):
             # 遍历数据集，并将数据转移到GPU上
@@ -284,20 +266,17 @@ def train_model(learning_rate, num_epochs):
             if i % 10 == 0:
                 print(f"predicted_labels：{predicted_labels}", '\n', f"True_labels：{True_labels}")
                 print(f"第{i}轮训练, loss：{loss.item()}, 第{i}次训练集F1准确率为:{f2}")
-
+            if i==10:
+                break
         # 验证
         model.eval()
-
         with torch.no_grad():
-            for i, (input_ids, attention_mask,  labels) in enumerate(val_loader):
+            for i, (input_ids, attention_mask, labels) in enumerate(val_loader):
                 out = model(input_ids=input_ids, attention_mask=attention_mask)
                 # 进行前向传播，得到预测值out
                 loss = criterion(out, labels.float())  # 计算损失
-                loss.backward()  # 反向传播，计算梯度
-                optimizer.step()  # 更新参数
-                optimizer.zero_grad()  # 梯度清零，防止梯度累积
-
                 out = torch.sigmoid(out)  # 将预测值转化为概率
+
                 out = torch.where(out > 0.5, torch.ones_like(out), torch.zeros_like(out))  # 找到概率大于0.5的位置，并将其设为1，否则设为0
                 predicted_labels = []
                 True_labels = []
@@ -326,13 +305,6 @@ def train_model(learning_rate, num_epochs):
                     print(f"predicted_labels：{predicted_labels}", '\n', f"True_labels：{True_labels}")
                     print(f"第{i}轮训练, loss：{loss.item()}, 第{i}次验证集F1准确率为:{average_val_f1}")
 
-        # 如果当前模型在验证集上的性能更好，则保存模型参数
-        if average_val_f1 > best_val_f1:
-            best_val_f1 = average_val_f1
-            best_model_state = model.state_dict()
-
-    # 加载具有最佳验证集性能的模型参数
-    model.load_state_dict(best_model_state)
 
     # 测试
     model.eval()

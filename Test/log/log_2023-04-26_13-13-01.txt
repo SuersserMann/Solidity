@@ -1,0 +1,4 @@
+2.0.0
+device= cpu
+train_dataset 79641
+正在训练模型，学习率：1e-05，训练周期：1
