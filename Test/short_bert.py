@@ -7,6 +7,7 @@ from pyevmasm import disassemble_hex
 import sys
 import os
 import datetime
+import copy
 
 
 class Logger(object):
@@ -85,11 +86,11 @@ class Model(torch.nn.Module):
     def __init__(self):
         super().__init__()
         # 定义一个全连接层，输入维度为768，输出维度为6
-        self.fc = torch.nn.Linear(768, 3)
-        '''self.fc = torch.nn.Sequential(
+        # self.fc = torch.nn.Linear(768, 3)
+        self.fc = torch.nn.Sequential(
             torch.nn.Linear(768, 100),
             torch.nn.ReLU(),
-            torch.nn.Linear(100, 6)'''  # 添加多层神经网络
+            torch.nn.Linear(100, 3))
 
     def forward(self, input_ids, attention_mask):
         # 将输入传入预训练模型，并记录计算图以计算梯度
@@ -105,7 +106,6 @@ class Model(torch.nn.Module):
 # 实例化下游任务模型并将其移动到 GPU 上 (如果可用)
 model = Model()
 model.to(device)
-
 
 # 定义数据集
 # class Dataset(torch.utils.data.Dataset):
@@ -142,7 +142,7 @@ df = pd.DataFrame(data, columns=['slither', 'source_code'])
 train_dataset = datasets.Dataset.from_pandas(df)
 train_dataset = [[train_dataset['slither'][i], train_dataset['source_code'][i]] for i in range(len(train_dataset))]
 # 打印 Dataset 的信息
-
+train_dataset = train_dataset * 500
 
 len(train_dataset), train_dataset[0]
 
@@ -166,10 +166,10 @@ def delete_comment(java_code):
     # 用空字符串替换掉 Java 代码中的注释
     return regex.sub(replace, java_code)
 
-def collate_fn(data):
 
+def collate_fn(data):
     source_codes = [delete_comment(i[1]) for i in data]
-    #bytecodes = [bytecode_to_opcodes(i[1]) for i in data]
+    # bytecodes = [bytecode_to_opcodes(i[1]) for i in data]
     labels = [i[0] for i in data]
     labels = [[label] for label in labels]
 
@@ -204,11 +204,11 @@ def collate_fn(data):
             cut_labels.insert(i + amount, labels[i])
         amount += len(cutted)
     labels = cut_labels
-    source_codes= cutted_list
+    source_codes = cutted_list
     # 编码
     data = token.batch_encode_plus(
         source_codes,
-        #bytecodes,
+        # bytecodes,
         padding='max_length',
         truncation=True,
         max_length=512,
@@ -235,19 +235,19 @@ def collate_fn(data):
 
 # 数据加载器
 train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
-                                           batch_size=4,  # 是每个批次的大小，也就是每次处理的样本数量。
+                                           batch_size=32,  # 是每个批次的大小，也就是每次处理的样本数量。
                                            collate_fn=collate_fn,  # 是一个函数，用于对每个批次中的样本进行编码和处理。
                                            shuffle=True,  # 是一个布尔值，表示是否对数据进行随机重排。
                                            drop_last=True)  # 是一个布尔值，表示是否在最后一个批次中舍弃不足一个批次大小的数据
 
 test_loader = torch.utils.data.DataLoader(dataset=train_dataset,
-                                          batch_size=4,  # 是每个批次的大小，也就是每次处理的样本数量。
+                                          batch_size=32,  # 是每个批次的大小，也就是每次处理的样本数量。
                                           collate_fn=collate_fn,  # 是一个函数，用于对每个批次中的样本进行编码和处理。
                                           shuffle=False,  # 是一个布尔值，表示是否对数据进行随机重排。
                                           drop_last=True)  # 是一个布尔值，表示是否在最后一个批次中舍弃不足一个批次大小的数据
 
 val_loader = torch.utils.data.DataLoader(dataset=train_dataset,
-                                         batch_size=4,  # 是每个批次的大小，也就是每次处理的样本数量。
+                                         batch_size=32,  # 是每个批次的大小，也就是每次处理的样本数量。
                                          collate_fn=collate_fn,  # 是一个函数，用于对每个批次中的样本进行编码和处理。
                                          shuffle=False,  # 是一个布尔值，表示是否对数据进行随机重排。
                                          drop_last=True)  # 是一个布尔值，表示是否在最后一个批次中舍弃不足一个批次大小的数据
@@ -277,6 +277,8 @@ def train_model(learning_rate, num_epochs):
             predicted_labels = []
             True_labels = []
             f2 = 0
+            f2_precision = 0
+            f2_recall = 0
             for j in range(len(out)):
                 predicted_label = torch.where(out[j] == 1)[0].tolist()  # 将位置索引转换为标签
                 predicted_labels.append(predicted_label)
@@ -295,17 +297,20 @@ def train_model(learning_rate, num_epochs):
                 f1 = calculate_f1(precision, recall)
 
                 f2 = f1 + f2
+                f2_precision = precision + f2_precision
+                f2_recall = recall + f2_recall
             f2 = f2 / len(out)
-
+            f2_precision = f2_precision / len(out)
+            f2_recall = f2_recall / len(out)
             if i % 10 == 0:
                 print(f"predicted_labels：{predicted_labels}", '\n', f"True_labels：{True_labels}")
-                print(f"第{i}轮训练, loss：{loss.item()}, 第{i}次训练集F1准确率为:{f2}")
-            if i == 10:
-                break
+                print(
+                    f"第{i}轮训练, loss：{loss.item()}, 第{i}次训练集F1准确率为:{f2},第{i}次训练集accuracy:{f2_precision},第{i}次训练集recall:{f2_recall}")
+            # if i == 500:
+            #     break
         # 验证
         model.eval()
-        f1 = 0
-        f2 = 0
+
         with torch.no_grad():
             for i, (input_ids, attention_mask, labels) in enumerate(val_loader):
                 out = model(input_ids=input_ids, attention_mask=attention_mask)
@@ -315,6 +320,9 @@ def train_model(learning_rate, num_epochs):
                 predicted_labels = []
                 True_labels = []
 
+                f2 = 0
+                f2_precision = 0
+                f2_recall = 0
                 for j in range(len(out)):
                     predicted_label = torch.where(out[j] == 1)[0].tolist()  # 将位置索引转换为标签
                     predicted_labels.append(predicted_label)
@@ -331,25 +339,29 @@ def train_model(learning_rate, num_epochs):
                     precision = TP / (TP + FP) if TP + FP else 0
                     recall = TP / (TP + FN) if TP + FN else 0
                     f1 = calculate_f1(precision, recall)
-                f2 = f1 + f2
+                    f2 = f1 + f2
+                    f2_precision = precision + f2_precision
+                    f2_recall = recall + f2_recall
                 average_val_f1 = f2 / len(out)
+                f2_precision = f2_precision / len(out)
+                f2_recall = f2_recall / len(out)
                 if i % 10 == 0:
                     print(f"predicted_labels：{predicted_labels}", '\n', f"True_labels：{True_labels}")
-                    print(f"第{i}轮训练, loss：{loss.item()}, 第{i}次验证集F1准确率为:{average_val_f1}")
-                if i == 10:
+                    print(
+                        f"第{i}轮验证, loss：{loss.item()}, 第{i}次验证集F1准确率为:{average_val_f1},第{i}次验证集accuracy:{f2_precision},第{i}次验证集recall:{f2_recall}")
+                if i == 100:
                     break
                 # 如果当前模型在验证集上的性能更好，则保存模型参数
         if average_val_f1 > best_val_f1:
             best_val_f1 = average_val_f1
-            best_model_state = model.state_dict()
+            best_model_state = copy.deepcopy(model.state_dict())
         else:
             break
     # 加载具有最佳验证集性能的模型参数
     model.load_state_dict(best_model_state)
     # 测试
     model.eval()
-    f1 = 0
-    f2 = 0
+
     with torch.no_grad():
         for i, (input_ids, attention_mask, labels) in enumerate(test_loader):
             out = model(input_ids=input_ids, attention_mask=attention_mask)
@@ -359,6 +371,9 @@ def train_model(learning_rate, num_epochs):
             predicted_labels = []
             True_labels = []
 
+            f2 = 0
+            f2_precision = 0
+            f2_recall = 0
             for j in range(len(out)):
                 predicted_label = torch.where(out[j] == 1)[0].tolist()  # 将位置索引转换为标签
                 predicted_labels.append(predicted_label)
@@ -375,35 +390,58 @@ def train_model(learning_rate, num_epochs):
                 precision = TP / (TP + FP) if TP + FP else 0
                 recall = TP / (TP + FN) if TP + FN else 0
                 f1 = calculate_f1(precision, recall)
-
-            f2 = f1 + f2
+                f2 = f1 + f2
+                f2_precision = precision + f2_precision
+                f2_recall = recall + f2_recall
             average_test_f1 = f2 / len(out)
-
+            f2_precision = f2_precision / len(out)
+            f2_recall = f2_recall / len(out)
             if i % 10 == 0:
                 print(f"predicted_labels：{predicted_labels}", '\n', f"True_labels：{True_labels}")
-                print(f"第{i}轮训练, loss：{loss.item()}, 第{i}次测试集F1准确率为:{average_test_f1}")
-            if i == 10:
+                print(
+                    f"第{i}轮测试, loss：{loss.item()}, 第{i}次测试集F1准确率为:{average_test_f1},第{i}次测试集accuracy:{f2_precision},第{i}次测试集recall:{f2_recall}")
+            if i == 100:
                 break
     print(f"测试集 F1 分数：{average_test_f1}")
 
-
+    return average_test_f1, best_model_state
 
 
 # 定义一个超参数空间，用于搜索最佳超参数
-learning_rates = [1e-5]
+# learning_rates = [1e-5, 3e-5, 1e-4]
+# num_epochs_list = list(range(1, 500))
+
+learning_rates = [3e-5]
 num_epochs_list = [1]
 
 best_hyperparams = None
 best_test_f1 = 0
 
-# 定义训练超参数
-learning_rate = 1e-5
-num_epochs = 1
+# 使用网格搜索遍历所有可能的超参数组合
+for lr in learning_rates:
+    for num_epochs in num_epochs_list:
+        print(f"正在训练模型，学习率：{lr}，训练周期：{num_epochs}")
 
-# 使用训练超参数训练模型
-model = train_model(learning_rate, num_epochs)
+        test_f1, _ = train_model(lr, num_epochs)
 
-# 保存训练好的模型
-model_save_path = "best_model.pth"
-torch.save(model.state_dict(), model_save_path)
-print(f"训练好的模型已保存到：{model_save_path}")
+        if test_f1 >= best_test_f1:
+            best_test_f1 = test_f1
+            best_hyperparams = {'learning_rate': lr, 'num_epochs': num_epochs}
+
+print(f"最佳超参数：{best_hyperparams}，测试集 F1 分数：{best_test_f1}")
+
+
+def train_and_save_best_model(best_hyperparams, save_path):
+    best_lr = best_hyperparams['learning_rate']
+    best_num_epochs = best_hyperparams['num_epochs']
+
+    # 使用找到的最佳超参数重新训练模型
+    _, model = train_model(best_lr, best_num_epochs)
+
+    # 保存训练好的模型
+    torch.save(model, save_path)
+    print(f"使用最佳超参数训练的模型已保存到：{save_path}")
+
+
+model_save_path = "../Test/best_model_5.pth"
+train_and_save_best_model(best_hyperparams, model_save_path)
