@@ -1,5 +1,6 @@
 import re
 import torch
+from torch import nn
 from transformers import AutoModel, AutoTokenizer
 from pyevmasm import disassemble_hex
 import sys
@@ -85,7 +86,11 @@ class Model(torch.nn.Module):
         self.fc = torch.nn.Sequential(
             torch.nn.Linear(768, 100),
             torch.nn.ReLU(),
-            torch.nn.Linear(100, 3))  # 添加多层神经网络
+            torch.nn.Dropout(p=0.3),
+            torch.nn.Linear(100, 50),
+            torch.nn.ReLU(),
+            torch.nn.Dropout(p=0.3),
+            torch.nn.Linear(50, 3))  # 添加多层神经网络
 
     def forward(self, input_ids, attention_mask):
         # 将输入传入预训练模型，并记录计算图以计算梯度
@@ -101,6 +106,7 @@ class Model(torch.nn.Module):
 
 # 实例化下游任务模型并将其移动到 GPU 上 (如果可用)
 model = Model()
+model = nn.DataParallel(model, device_ids=device_ids)
 model.to(device)
 
 # 定义数据集
@@ -138,7 +144,7 @@ df = pd.DataFrame(data, columns=['slither', 'source_code'])
 # 将 DataFrame 转换为 Dataset 对象
 all_dataset = datasets.Dataset.from_pandas(df)
 all_dataset = [[all_dataset['slither'][i], all_dataset['source_code'][i]] for i in range(len(all_dataset))]
-
+all_dataset = all_dataset*20
 train_ratio = 0.8  # 训练集比例
 val_ratio = 0.1  # 验证集比例
 test_ratio = 0.1  # 测试集比例
@@ -221,7 +227,7 @@ def collate_fn(data):
         # bytecodes,
         padding='max_length',
         truncation=True,
-        max_length=512,
+        max_length=510,
         return_tensors='pt',  # 返回pytorch模型
         return_length=True)
 
@@ -243,29 +249,35 @@ def collate_fn(data):
     return input_ids, attention_mask, labels_tensor
 
 
-# 数据加载器
+# 数据加载器，数据少的话，具体原因不清楚，batchsize不能太大，明白了，数据太少了，刚才的数据被drop_last丢掉了
 train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
-                                           batch_size=32,  # 是每个批次的大小，也就是每次处理的样本数量。
-                                           collate_fn=collate_fn,  # 是一个函数，用于对每个批次中的样本进行编码和处理。
+                                           batch_size=80,  # 是每个批轮的大小，也就是每轮处理的样本数量。
+                                           collate_fn=collate_fn,  # 是一个函数，用于对每个批轮中的样本进行编码和处理。
                                            shuffle=True,  # 是一个布尔值，表示是否对数据进行随机重排。
-                                           drop_last=True)  # 是一个布尔值，表示是否在最后一个批次中舍弃不足一个批次大小的数据
+                                           drop_last=False)  # 是一个布尔值，表示是否在最后一个批轮中舍弃不足一个批轮大小的数据
 
 test_loader = torch.utils.data.DataLoader(dataset=val_dataset,
-                                          batch_size=32,  # 是每个批次的大小，也就是每次处理的样本数量。
-                                          collate_fn=collate_fn,  # 是一个函数，用于对每个批次中的样本进行编码和处理。
+                                          batch_size=80,  # 是每个批轮的大小，也就是每轮处理的样本数量。
+                                          collate_fn=collate_fn,  # 是一个函数，用于对每个批轮中的样本进行编码和处理。
                                           shuffle=False,  # 是一个布尔值，表示是否对数据进行随机重排。
-                                          drop_last=True)  # 是一个布尔值，表示是否在最后一个批次中舍弃不足一个批次大小的数据
+                                          drop_last=False)  # 是一个布尔值，表示是否在最后一个批轮中舍弃不足一个批轮大小的数据
 
 val_loader = torch.utils.data.DataLoader(dataset=test_dataset,
-                                         batch_size=32,  # 是每个批次的大小，也就是每次处理的样本数量。
-                                         collate_fn=collate_fn,  # 是一个函数，用于对每个批次中的样本进行编码和处理。
+                                         batch_size=80,  # 是每个批轮的大小，也就是每轮处理的样本数量。
+                                         collate_fn=collate_fn,  # 是一个函数，用于对每个批轮中的样本进行编码和处理。
                                          shuffle=False,  # 是一个布尔值，表示是否对数据进行随机重排。
-                                         drop_last=True)  # 是一个布尔值，表示是否在最后一个批次中舍弃不足一个批次大小的数据
+                                         drop_last=False)  # 是一个布尔值，表示是否在最后一个批轮中舍弃不足一个批轮大小的数据
+
+
+def reset_model_parameters(model):
+    for parameter in model.parameters():
+        parameter.data.normal_(mean=0.0, std=0.02)
 
 
 def train_model(learning_rate, num_epochs):
+    reset_model_parameters(model)
     # 训练
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)  # 使用传入的学习率
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)  # 使用传入的学习率
     criterion = torch.nn.BCEWithLogitsLoss()
 
     best_val_f1 = 0  # 初始化最佳验证集 F1 分数
@@ -312,12 +324,8 @@ def train_model(learning_rate, num_epochs):
             f2 = f2 / len(out)
             f2_precision = f2_precision / len(out)
             f2_recall = f2_recall / len(out)
-            if i % 10 == 0:
-                print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
-                print(
-                    f"第{i}轮训练, loss：{loss.item()}, 第{i}次训练集F1准确率为:{f2},第{i}次训练集accuracy:{f2_precision},第{i}次训练集recall:{f2_recall}")
-            # if i == 500:
-            #     break
+            print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
+            print(f"第{i + 1}轮训练, loss：{loss.item()}, 第{i + 1}轮训练集F1准确率为:{f2},第{i + 1}轮训练集accuracy:{f2_precision},第{i + 1}轮训练集recall:{f2_recall}")
         # 验证
         model.eval()
 
@@ -326,7 +334,7 @@ def train_model(learning_rate, num_epochs):
                 out = model(input_ids=input_ids, attention_mask=attention_mask)
                 loss = criterion(out, labels.float())  # 计算损失
                 out = torch.sigmoid(out)  # 将预测值转化为概率
-                out = torch.where(out > 0.4, torch.ones_like(out), torch.zeros_like(out))  # 找到概率大于0.5的位置，并将其设为1，否则设为0
+                out = torch.where(out > 0.5, torch.ones_like(out), torch.zeros_like(out))  # 找到概率大于0.5的位置，并将其设为1，否则设为0
                 predicted_labels = []
                 true_labels = []
 
@@ -355,18 +363,14 @@ def train_model(learning_rate, num_epochs):
                 average_val_f1 = f2 / len(out)
                 f2_precision = f2_precision / len(out)
                 f2_recall = f2_recall / len(out)
-                if i % 10 == 0:
-                    print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
-                    print(
-                        f"第{i}轮验证, loss：{loss.item()}, 第{i}次验证集F1准确率为:{average_val_f1},第{i}次验证集accuracy:{f2_precision},第{i}次验证集recall:{f2_recall}")
-                if i == 100:
-                    break
-                # 如果当前模型在验证集上的性能更好，则保存模型参数
+
+                print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
+                print(f"第{i + 1}轮验证, loss：{loss.item()}, 第{i + 1}轮验证集F1准确率为:{average_val_f1},第{i + 1}轮验证集accuracy:{f2_precision},第{i + 1}轮验证集recall:{f2_recall}")
+
         if average_val_f1 > best_val_f1:
             best_val_f1 = average_val_f1
             best_model_state = copy.deepcopy(model.state_dict())
-        else:
-            break
+
     # 加载具有最佳验证集性能的模型参数
     model.load_state_dict(best_model_state)
     # 测试
@@ -377,7 +381,7 @@ def train_model(learning_rate, num_epochs):
             out = model(input_ids=input_ids, attention_mask=attention_mask)
             loss = criterion(out, labels.float())  # 计算损失
             out = torch.sigmoid(out)  # 将预测值转化为概率
-            out = torch.where(out > 0.4, torch.ones_like(out), torch.zeros_like(out))  # 找到概率大于0.5的位置，并将其设为1，否则设为0
+            out = torch.where(out > 0.5, torch.ones_like(out), torch.zeros_like(out))  # 找到概率大于0.5的位置，并将其设为1，否则设为0
             predicted_labels = []
             true_labels = []
 
@@ -406,20 +410,17 @@ def train_model(learning_rate, num_epochs):
             average_test_f1 = f2 / len(out)
             f2_precision = f2_precision / len(out)
             f2_recall = f2_recall / len(out)
-            if i % 10 == 0:
-                print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
-                print(
-                    f"第{i}轮测试, loss：{loss.item()}, 第{i}次测试集F1准确率为:{average_test_f1},第{i}次测试集accuracy:{f2_precision},第{i}次测试集recall:{f2_recall}")
-            if i == 100:
-                break
+            print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
+            print(f"第{i + 1}轮测试, loss：{loss.item()}, 第{i + 1}轮测试集F1准确率为:{average_test_f1},第{i + 1}轮测试集accuracy:{f2_precision},第{i + 1}轮测试集recall:{f2_recall}")
+
     print(f"测试集 F1 分数：{average_test_f1}")
 
     return average_test_f1, best_model_state
 
 
 # 定义一个超参数空间，用于搜索最佳超参数
-learning_rates = [1e-5, 3e-5, 1e-4]
-num_epochs_list = list(range(1, 200))
+learning_rates = [3e-5, 1e-4, 3e-4]
+num_epochs_list = [100, 300, 500]
 
 best_hyperparams = None
 best_test_f1 = 0
@@ -450,5 +451,5 @@ def train_and_save_best_model(best_hyperparams, save_path):
     print(f"使用最佳超参数训练的模型已保存到：{save_path}")
 
 
-model_save_path = "../Test/best_model_5.pth"
+model_save_path = "../Test/best_model_7.pth"
 train_and_save_best_model(best_hyperparams, model_save_path)
