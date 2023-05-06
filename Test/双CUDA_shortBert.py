@@ -7,7 +7,8 @@ import sys
 import os
 import datetime
 import copy
-
+# from pytorchtools import EarlyStopping
+import torch.utils.data as Data
 
 class Logger(object):
     def __init__(self, filename):
@@ -86,11 +87,8 @@ class Model(torch.nn.Module):
         self.fc = torch.nn.Sequential(
             torch.nn.Linear(768, 100),
             torch.nn.ReLU(),
-            torch.nn.Dropout(p=0.3),
-            torch.nn.Linear(100, 50),
-            torch.nn.ReLU(),
-            torch.nn.Dropout(p=0.3),
-            torch.nn.Linear(50, 3))  # 添加多层神经网络
+            torch.nn.Dropout(p=0.1),
+            torch.nn.Linear(100, 3))  # 添加多层神经网络
 
     def forward(self, input_ids, attention_mask):
         # 将输入传入预训练模型，并记录计算图以计算梯度
@@ -106,7 +104,7 @@ class Model(torch.nn.Module):
 
 # 实例化下游任务模型并将其移动到 GPU 上 (如果可用)
 model = Model()
-model = nn.DataParallel(model, device_ids=device_ids)
+model = nn.DataParallel(model,device_ids=device_ids)
 model.to(device)
 
 # 定义数据集
@@ -280,6 +278,9 @@ def train_model(learning_rate, num_epochs):
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)  # 使用传入的学习率
     criterion = torch.nn.BCEWithLogitsLoss()
 
+    # patience = 20  # 当验证集损失在连续20次训练周期中都没有得到降低时，停止模型训练，以防止模型过拟合
+    # early_stopping = EarlyStopping(patience, verbose=True)
+
     best_val_f1 = 0  # 初始化最佳验证集 F1 分数
     best_model_state = None  # 保存最佳模型参数
 
@@ -337,6 +338,13 @@ def train_model(learning_rate, num_epochs):
                 out = torch.where(out > 0.5, torch.ones_like(out), torch.zeros_like(out))  # 找到概率大于0.5的位置，并将其设为1，否则设为0
                 predicted_labels = []
                 true_labels = []
+
+                # early_stopping(loss, model)
+                # # 若满足 early stopping 要求
+                # if early_stopping.early_stop:
+                #     print("Early stopping")
+                #     # 结束模型训练
+                #     break
 
                 f2 = 0
                 f2_precision = 0
