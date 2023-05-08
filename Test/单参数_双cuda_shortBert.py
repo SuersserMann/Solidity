@@ -11,7 +11,9 @@ import datetime
 import copy
 # from pytorchtools import EarlyStopping
 import torch.utils.data as Data
-
+from torch.utils.tensorboard import SummaryWriter
+import subprocess
+import webbrowser
 
 class Logger(object):
     def __init__(self, filename):
@@ -279,6 +281,9 @@ def reset_model_parameters(model):
 def train_model(learning_rate, num_epochs):
     # reset_model_parameters(model.fc)
     # 训练
+
+    writer = SummaryWriter('runs')
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)  # 使用传入的学习率
     criterion = torch.nn.BCEWithLogitsLoss()
 
@@ -288,9 +293,20 @@ def train_model(learning_rate, num_epochs):
     best_val_f1 = 0  # 初始化最佳验证集 F1 分数
     best_model_state = None  # 保存最佳模型参数
 
+    # # 启动 TensorBoard
+    # tb_process = subprocess.Popen(['tensorboard', '--logdir', 'runs/'])
+    #
+    # # 打开 TensorBoard 网页
+    # webbrowser.open_new_tab('http://localhost:6006/')
+
     try:
         for epoch in range(num_epochs):
             model.train()
+            train_loss = 0
+            train_f1 = 0
+            train_acc = 0
+            train_recall = 0
+            train_count=0
             for i, (input_ids, attention_mask, labels) in enumerate(train_loader):
                 # 遍历数据集，并将数据转移到GPU上
                 out = model(input_ids=input_ids, attention_mask=attention_mask)
@@ -330,12 +346,32 @@ def train_model(learning_rate, num_epochs):
                 f2 = f2 / len(out)
                 f2_precision = f2_precision / len(out)
                 f2_recall = f2_recall / len(out)
+
+                train_loss += loss.item()
+                train_f1 += f2
+                train_acc += f2_precision
+                train_recall += f2_recall
+                train_count += 1
                 print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
-                print(
-                    f"第{epoch + 1}周期：第{i + 1}轮训练, loss：{loss.item()}, 第{i + 1}轮训练集F1准确率为:{f2},第{i + 1}轮训练集accuracy:{f2_precision},第{i + 1}轮训练集recall:{f2_recall}")
+                print(f"第{epoch + 1}周期：第{i + 1}轮训练, loss：{loss.item()}, 第{i + 1}轮训练集F1准确率为:{f2},第{i + 1}轮训练集accuracy:{f2_precision},第{i + 1}轮训练集recall:{f2_recall}")
+
+            train_loss /= train_count
+            train_f1 /= train_count
+            train_acc /= train_count
+            train_recall /= train_count
+
+            writer.add_scalar('Train Loss', train_loss, epoch)  # 记录训练损失
+            writer.add_scalar('Train F1', train_f1, epoch)  # 记录训练F1得分
+            writer.add_scalar('Train Accuracy', train_acc, epoch)  # 记录训练准确度
+            writer.add_scalar('Train Recall', train_recall, epoch)  # 记录训练召回率
+
             # 验证
             model.eval()
-
+            val_loss = 0
+            val_f1 = 0
+            val_acc = 0
+            val_recall = 0
+            val_count = 0
             with torch.no_grad():
                 for i, (input_ids, attention_mask, labels) in enumerate(val_loader):
                     out = model(input_ids=input_ids, attention_mask=attention_mask)
@@ -379,9 +415,23 @@ def train_model(learning_rate, num_epochs):
                     f2_precision = f2_precision / len(out)
                     f2_recall = f2_recall / len(out)
 
+                    val_loss += loss.item()
+                    val_f1 += average_val_f1
+                    val_acc += f2_precision
+                    val_recall += f2_recall
+                    val_count += 1
                     print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
-                    print(
-                        f"第{epoch + 1}周期：第{i + 1}轮验证, loss：{loss.item()}, 第{i + 1}轮验证集F1准确率为:{average_val_f1},第{i + 1}轮验证集accuracy:{f2_precision},第{i + 1}轮验证集recall:{f2_recall}")
+                    print(f"第{epoch + 1}周期：第{i + 1}轮验证, loss：{loss.item()}, 第{i + 1}轮验证集F1准确率为:{average_val_f1},第{i + 1}轮验证集accuracy:{f2_precision},第{i + 1}轮验证集recall:{f2_recall}")
+
+                val_loss /= val_count
+                val_f1 /= val_count
+                val_acc /= val_count
+                val_recall /= val_count
+
+                writer.add_scalar('Val Loss', val_loss, epoch)  # 记录验证损失
+                writer.add_scalar('Val F1', val_f1, epoch)  # 记录验证F1得分
+                writer.add_scalar('Val Accuracy', val_acc, epoch)  # 记录验证准确度
+                writer.add_scalar('Val Recall', val_recall, epoch)  # 记录验证召回率
 
             if average_val_f1 > best_val_f1:
                 best_val_f1 = average_val_f1
@@ -427,8 +477,7 @@ def train_model(learning_rate, num_epochs):
                 f2_precision = f2_precision / len(out)
                 f2_recall = f2_recall / len(out)
                 print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
-                print(
-                    f"第{i + 1}轮测试, loss：{loss.item()}, 第{i + 1}轮测试集F1准确率为:{average_test_f1},第{i + 1}轮测试集accuracy:{f2_precision},第{i + 1}轮测试集recall:{f2_recall}")
+                print(f"第{i + 1}轮测试, loss：{loss.item()}, 第{i + 1}轮测试集F1准确率为:{average_test_f1},第{i + 1}轮测试集accuracy:{f2_precision},第{i + 1}轮测试集recall:{f2_recall}")
 
         print(f"测试集 F1 分数：{average_test_f1}")
 
