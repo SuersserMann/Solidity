@@ -299,6 +299,7 @@ def train_model(learning_rate, num_epochs):
     # # 打开 TensorBoard 网页
     # webbrowser.open_new_tab('http://localhost:6006/')
 
+
     try:
         for epoch in range(num_epochs):
             model.train()
