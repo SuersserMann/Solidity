@@ -141,6 +141,7 @@ df = pd.DataFrame(data, columns=['slither', 'source_code'])
 # 将 DataFrame 转换为 Dataset 对象
 all_dataset = datasets.Dataset.from_pandas(df)
 all_dataset = [[all_dataset['slither'][i], all_dataset['source_code'][i]] for i in range(len(all_dataset))]
+all_dataset = all_dataset*20
 train_ratio = 0.8  # 训练集比例
 val_ratio = 0.1  # 验证集比例
 test_ratio = 0.1  # 测试集比例
@@ -425,38 +426,15 @@ def train_model(learning_rate, num_epochs):
     return average_test_f1, best_model_state
 
 
-# 定义一个超参数空间，用于搜索最佳超参数
-learning_rates = [3e-5]
-num_epochs_list = [1000]
+# 定义一个超参数空间，用于搜佳超参数
+learning_rate = 3e-5
+num_epochs = 10
 
-best_hyperparams = None
-best_test_f1 = 0
+# 使用指定的超参数训练模型
+test_f1, model = train_model(learning_rate, num_epochs)
 
-# 使用网格搜索遍历所有可能的超参数组合
-for lr in learning_rates:
-    for num_epochs in num_epochs_list:
-        print(f"正在训练模型，学习率：{lr}，训练周期：{num_epochs}")
-
-        test_f1, _ = train_model(lr, num_epochs)
-
-        if test_f1 >= best_test_f1:
-            best_test_f1 = test_f1
-            best_hyperparams = {'learning_rate': lr, 'num_epochs': num_epochs}
-
-print(f"最佳超参数：{best_hyperparams}，测试集 F1 分数：{best_test_f1}")
-
-
-def train_and_save_best_model(best_hyperparams, save_path):
-    best_lr = best_hyperparams['learning_rate']
-    best_num_epochs = best_hyperparams['num_epochs']
-
-    # 使用找到的最佳超参数重新训练模型
-    _, model = train_model(best_lr, best_num_epochs)
-
-    # 保存训练好的模型
-    torch.save(model, save_path)
-    print(f"使用最佳超参数训练的模型已保存到：{save_path}")
-
-
+# 保存训练好的模型
 model_save_path = "../Test/best_model_7.pth"
-train_and_save_best_model(best_hyperparams, model_save_path)
+torch.save(model, model_save_path)
+print(f"使用指定的超参数训练的模型已保存到：{model_save_path}")
+print(f"测试集 F1 分数：{test_f1}")
