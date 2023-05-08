@@ -1,4 +1,6 @@
 import re
+
+import numpy as np
 import torch
 from torch import nn
 from transformers import AutoModel, AutoTokenizer
@@ -9,6 +11,9 @@ import datetime
 import copy
 # from pytorchtools import EarlyStopping
 import torch.utils.data as Data
+from torch.utils.tensorboard import SummaryWriter
+import subprocess
+import webbrowser
 
 class Logger(object):
     def __init__(self, filename):
@@ -103,8 +108,9 @@ class Model(torch.nn.Module):
 
 # 实例化下游任务模型并将其移动到 GPU 上 (如果可用)
 model = Model()
-model = nn.DataParallel(model,device_ids=device_ids)
+model = nn.DataParallel(model, device_ids=device_ids)
 model.to(device)
+
 
 # 定义数据集
 # class Dataset(torch.utils.data.Dataset):
@@ -141,7 +147,6 @@ df = pd.DataFrame(data, columns=['slither', 'source_code'])
 # 将 DataFrame 转换为 Dataset 对象
 all_dataset = datasets.Dataset.from_pandas(df)
 all_dataset = [[all_dataset['slither'][i], all_dataset['source_code'][i]] for i in range(len(all_dataset))]
-all_dataset = all_dataset*20
 train_ratio = 0.8  # 训练集比例
 val_ratio = 0.1  # 验证集比例
 test_ratio = 0.1  # 测试集比例
@@ -248,19 +253,19 @@ def collate_fn(data):
 
 # 数据加载器，数据少的话，具体原因不清楚，batchsize不能太大，明白了，数据太少了，刚才的数据被drop_last丢掉了
 train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
-                                           batch_size=80,  # 是每个批轮的大小，也就是每轮处理的样本数量。
+                                           batch_size=32,  # 是每个批轮的大小，也就是每轮处理的样本数量。
                                            collate_fn=collate_fn,  # 是一个函数，用于对每个批轮中的样本进行编码和处理。
                                            shuffle=True,  # 是一个布尔值，表示是否对数据进行随机重排。
                                            drop_last=False)  # 是一个布尔值，表示是否在最后一个批轮中舍弃不足一个批轮大小的数据
 
 test_loader = torch.utils.data.DataLoader(dataset=val_dataset,
-                                          batch_size=80,  # 是每个批轮的大小，也就是每轮处理的样本数量。
+                                          batch_size=32,  # 是每个批轮的大小，也就是每轮处理的样本数量。
                                           collate_fn=collate_fn,  # 是一个函数，用于对每个批轮中的样本进行编码和处理。
                                           shuffle=False,  # 是一个布尔值，表示是否对数据进行随机重排。
                                           drop_last=False)  # 是一个布尔值，表示是否在最后一个批轮中舍弃不足一个批轮大小的数据
 
 val_loader = torch.utils.data.DataLoader(dataset=test_dataset,
-                                         batch_size=80,  # 是每个批轮的大小，也就是每轮处理的样本数量。
+                                         batch_size=32,  # 是每个批轮的大小，也就是每轮处理的样本数量。
                                          collate_fn=collate_fn,  # 是一个函数，用于对每个批轮中的样本进行编码和处理。
                                          shuffle=False,  # 是一个布尔值，表示是否对数据进行随机重排。
                                          drop_last=False)  # 是一个布尔值，表示是否在最后一个批轮中舍弃不足一个批轮大小的数据
@@ -272,9 +277,13 @@ def reset_model_parameters(model):
     for parameter in model.parameters():
         parameter.data.normal_(mean=0.0, std=0.02)
 
+
 def train_model(learning_rate, num_epochs):
-    #reset_model_parameters(model.fc)
+    # reset_model_parameters(model.fc)
     # 训练
+
+    writer = SummaryWriter('runs')
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)  # 使用传入的学习率
     criterion = torch.nn.BCEWithLogitsLoss()
 
@@ -284,67 +293,164 @@ def train_model(learning_rate, num_epochs):
     best_val_f1 = 0  # 初始化最佳验证集 F1 分数
     best_model_state = None  # 保存最佳模型参数
 
-    for epoch in range(num_epochs):
-        model.train()
-        for i, (input_ids, attention_mask, labels) in enumerate(train_loader):
-            # 遍历数据集，并将数据转移到GPU上
-            out = model(input_ids=input_ids, attention_mask=attention_mask)
-            # 进行前向传播，得到预测值out
-            loss = criterion(out, labels.float())  # 计算损失
-            loss.backward()  # 反向传播，计算梯度
-            optimizer.step()  # 更新参数
-            optimizer.zero_grad()  # 梯度清零，防止梯度累积
+    # # 启动 TensorBoard
+    # tb_process = subprocess.Popen(['tensorboard', '--logdir', 'runs/'])
+    #
+    # # 打开 TensorBoard 网页
+    # webbrowser.open_new_tab('http://localhost:6006/')
 
-            out = torch.sigmoid(out)  # 将预测值转化为概率
-            out = torch.where(out > 0.5, torch.ones_like(out), torch.zeros_like(out))  # 找到概率大于0.5的位置，并将其设为1，否则设为0
-            predicted_labels = []
-            true_labels = []
-            f2 = 0
-            f2_precision = 0
-            f2_recall = 0
-            for j in range(len(out)):
-                predicted_label = torch.where(out[j] == 1)[0].tolist()  # 将位置索引转换为标签
-                predicted_labels.append(predicted_label)
-                true_label = torch.where(labels[j] == 1)[0].tolist()
-                true_labels.append(true_label)
 
-                # 计算F1分数
-                predicted_set = set(predicted_label)
-                true_set = set(true_label)
+    try:
+        for epoch in range(num_epochs):
+            model.train()
+            train_loss = 0
+            train_f1 = 0
+            train_acc = 0
+            train_recall = 0
+            train_count=0
+            for i, (input_ids, attention_mask, labels) in enumerate(train_loader):
+                # 遍历数据集，并将数据转移到GPU上
+                out = model(input_ids=input_ids, attention_mask=attention_mask)
+                # 进行前向传播，得到预测值out
+                loss = criterion(out, labels.float())  # 计算损失
+                loss.backward()  # 反向传播，计算梯度
+                optimizer.step()  # 更新参数
+                optimizer.zero_grad()  # 梯度清零，防止梯度累积
 
-                TP = len(predicted_set.intersection(true_set))
-                FP = len(predicted_set - true_set)
-                FN = len(true_set - predicted_set)
-                precision = TP / (TP + FP) if TP + FP else 0
-                recall = TP / (TP + FN) if TP + FN else 0
-                f1 = calculate_f1(precision, recall)
+                out = torch.sigmoid(out)  # 将预测值转化为概率
+                out = torch.where(out > 0.5, torch.ones_like(out), torch.zeros_like(out))  # 找到概率大于0.5的位置，并将其设为1，否则设为0
+                predicted_labels = []
+                true_labels = []
+                f2 = 0
+                f2_precision = 0
+                f2_recall = 0
+                for j in range(len(out)):
+                    predicted_label = torch.where(out[j] == 1)[0].tolist()  # 将位置索引转换为标签
+                    predicted_labels.append(predicted_label)
+                    true_label = torch.where(labels[j] == 1)[0].tolist()
+                    true_labels.append(true_label)
 
-                f2 = f1 + f2
-                f2_precision = precision + f2_precision
-                f2_recall = recall + f2_recall
-            f2 = f2 / len(out)
-            f2_precision = f2_precision / len(out)
-            f2_recall = f2_recall / len(out)
-            print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
-            print(f"第{epoch+1}周期：第{i + 1}轮训练, loss：{loss.item()}, 第{i + 1}轮训练集F1准确率为:{f2},第{i + 1}轮训练集accuracy:{f2_precision},第{i + 1}轮训练集recall:{f2_recall}")
-        # 验证
+                    # 计算F1分数
+                    predicted_set = set(predicted_label)
+                    true_set = set(true_label)
+
+                    TP = len(predicted_set.intersection(true_set))
+                    FP = len(predicted_set - true_set)
+                    FN = len(true_set - predicted_set)
+                    precision = TP / (TP + FP) if TP + FP else 0
+                    recall = TP / (TP + FN) if TP + FN else 0
+                    f1 = calculate_f1(precision, recall)
+
+                    f2 = f1 + f2
+                    f2_precision = precision + f2_precision
+                    f2_recall = recall + f2_recall
+                f2 = f2 / len(out)
+                f2_precision = f2_precision / len(out)
+                f2_recall = f2_recall / len(out)
+
+                train_loss += loss.item()
+                train_f1 += f2
+                train_acc += f2_precision
+                train_recall += f2_recall
+                train_count += 1
+                print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
+                print(f"第{epoch + 1}周期：第{i + 1}轮训练, loss：{loss.item()}, 第{i + 1}轮训练集F1准确率为:{f2},第{i + 1}轮训练集accuracy:{f2_precision},第{i + 1}轮训练集recall:{f2_recall}")
+
+            train_loss /= train_count
+            train_f1 /= train_count
+            train_acc /= train_count
+            train_recall /= train_count
+
+            writer.add_scalar('Train Loss', train_loss, epoch)  # 记录训练损失
+            writer.add_scalar('Train F1', train_f1, epoch)  # 记录训练F1得分
+            writer.add_scalar('Train Accuracy', train_acc, epoch)  # 记录训练准确度
+            writer.add_scalar('Train Recall', train_recall, epoch)  # 记录训练召回率
+
+            # 验证
+            model.eval()
+            val_loss = 0
+            val_f1 = 0
+            val_acc = 0
+            val_recall = 0
+            val_count = 0
+            with torch.no_grad():
+                for i, (input_ids, attention_mask, labels) in enumerate(val_loader):
+                    out = model(input_ids=input_ids, attention_mask=attention_mask)
+                    loss = criterion(out, labels.float())  # 计算损失
+                    out = torch.sigmoid(out)  # 将预测值转化为概率
+                    out = torch.where(out > 0.5, torch.ones_like(out), torch.zeros_like(out))  # 找到概率大于0.5的位置，并将其设为1，否则设为0
+                    predicted_labels = []
+                    true_labels = []
+
+                    # early_stopping(loss, model)
+                    # # 若满足 early stopping 要求
+                    # if early_stopping.early_stop:
+                    #     print("Early stopping")
+                    #     # 结束模型训练
+                    #     break
+
+
+                    f2 = 0
+                    f2_precision = 0
+                    f2_recall = 0
+                    for j in range(len(out)):
+                        predicted_label = torch.where(out[j] == 1)[0].tolist()  # 将位置索引转换为标签
+                        predicted_labels.append(predicted_label)
+                        true_label = torch.where(labels[j] == 1)[0].tolist()
+                        true_labels.append(true_label)
+
+                        # 计算F1分数
+                        predicted_set = set(predicted_label)
+                        true_set = set(true_label)
+
+                        TP = len(predicted_set.intersection(true_set))
+                        FP = len(predicted_set - true_set)
+                        FN = len(true_set - predicted_set)
+                        precision = TP / (TP + FP) if TP + FP else 0
+                        recall = TP / (TP + FN) if TP + FN else 0
+                        f1 = calculate_f1(precision, recall)
+                        f2 = f1 + f2
+                        f2_precision = precision + f2_precision
+                        f2_recall = recall + f2_recall
+                    average_val_f1 = f2 / len(out)
+                    f2_precision = f2_precision / len(out)
+                    f2_recall = f2_recall / len(out)
+
+                    val_loss += loss.item()
+                    val_f1 += average_val_f1
+                    val_acc += f2_precision
+                    val_recall += f2_recall
+                    val_count += 1
+                    print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
+                    print(f"第{epoch + 1}周期：第{i + 1}轮验证, loss：{loss.item()}, 第{i + 1}轮验证集F1准确率为:{average_val_f1},第{i + 1}轮验证集accuracy:{f2_precision},第{i + 1}轮验证集recall:{f2_recall}")
+
+                val_loss /= val_count
+                val_f1 /= val_count
+                val_acc /= val_count
+                val_recall /= val_count
+
+                writer.add_scalar('Val Loss', val_loss, epoch)  # 记录验证损失
+                writer.add_scalar('Val F1', val_f1, epoch)  # 记录验证F1得分
+                writer.add_scalar('Val Accuracy', val_acc, epoch)  # 记录验证准确度
+                writer.add_scalar('Val Recall', val_recall, epoch)  # 记录验证召回率
+
+            if average_val_f1 > best_val_f1:
+                best_val_f1 = average_val_f1
+                best_model_state = copy.deepcopy(model.state_dict())
+
+        # 加载具有最佳验证集性能的模型参数
+        model.load_state_dict(best_model_state)
+        # 测试
         model.eval()
 
         with torch.no_grad():
-            for i, (input_ids, attention_mask, labels) in enumerate(val_loader):
+            for i, (input_ids, attention_mask, labels) in enumerate(test_loader):
                 out = model(input_ids=input_ids, attention_mask=attention_mask)
                 loss = criterion(out, labels.float())  # 计算损失
                 out = torch.sigmoid(out)  # 将预测值转化为概率
                 out = torch.where(out > 0.5, torch.ones_like(out), torch.zeros_like(out))  # 找到概率大于0.5的位置，并将其设为1，否则设为0
                 predicted_labels = []
                 true_labels = []
-
-                # early_stopping(loss, model)
-                # # 若满足 early stopping 要求
-                # if early_stopping.early_stop:
-                #     print("Early stopping")
-                #     # 结束模型训练
-                #     break
 
                 f2 = 0
                 f2_precision = 0
@@ -368,63 +474,22 @@ def train_model(learning_rate, num_epochs):
                     f2 = f1 + f2
                     f2_precision = precision + f2_precision
                     f2_recall = recall + f2_recall
-                average_val_f1 = f2 / len(out)
+                average_test_f1 = f2 / len(out)
                 f2_precision = f2_precision / len(out)
                 f2_recall = f2_recall / len(out)
-
                 print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
-                print(f"第{epoch+1}周期：第{i + 1}轮验证, loss：{loss.item()}, 第{i + 1}轮验证集F1准确率为:{average_val_f1},第{i + 1}轮验证集accuracy:{f2_precision},第{i + 1}轮验证集recall:{f2_recall}")
+                print(f"第{i + 1}轮测试, loss：{loss.item()}, 第{i + 1}轮测试集F1准确率为:{average_test_f1},第{i + 1}轮测试集accuracy:{f2_precision},第{i + 1}轮测试集recall:{f2_recall}")
 
-        if average_val_f1 > best_val_f1:
-            best_val_f1 = average_val_f1
-            best_model_state = copy.deepcopy(model.state_dict())
+        print(f"测试集 F1 分数：{average_test_f1}")
 
-    # 加载具有最佳验证集性能的模型参数
-    model.load_state_dict(best_model_state)
-    # 测试
-    model.eval()
+        return average_test_f1, best_model_state
 
-    with torch.no_grad():
-        for i, (input_ids, attention_mask, labels) in enumerate(test_loader):
-            out = model(input_ids=input_ids, attention_mask=attention_mask)
-            loss = criterion(out, labels.float())  # 计算损失
-            out = torch.sigmoid(out)  # 将预测值转化为概率
-            out = torch.where(out > 0.5, torch.ones_like(out), torch.zeros_like(out))  # 找到概率大于0.5的位置，并将其设为1，否则设为0
-            predicted_labels = []
-            true_labels = []
-
-            f2 = 0
-            f2_precision = 0
-            f2_recall = 0
-            for j in range(len(out)):
-                predicted_label = torch.where(out[j] == 1)[0].tolist()  # 将位置索引转换为标签
-                predicted_labels.append(predicted_label)
-                true_label = torch.where(labels[j] == 1)[0].tolist()
-                true_labels.append(true_label)
-
-                # 计算F1分数
-                predicted_set = set(predicted_label)
-                true_set = set(true_label)
-
-                TP = len(predicted_set.intersection(true_set))
-                FP = len(predicted_set - true_set)
-                FN = len(true_set - predicted_set)
-                precision = TP / (TP + FP) if TP + FP else 0
-                recall = TP / (TP + FN) if TP + FN else 0
-                f1 = calculate_f1(precision, recall)
-                f2 = f1 + f2
-                f2_precision = precision + f2_precision
-                f2_recall = recall + f2_recall
-            average_test_f1 = f2 / len(out)
-            f2_precision = f2_precision / len(out)
-            f2_recall = f2_recall / len(out)
-            print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
-            print(f"第{i + 1}轮测试, loss：{loss.item()}, 第{i + 1}轮测试集F1准确率为:{average_test_f1},第{i + 1}轮测试集accuracy:{f2_precision},第{i + 1}轮测试集recall:{f2_recall}")
-
-    print(f"测试集 F1 分数：{average_test_f1}")
-
-    return average_test_f1, best_model_state
-
+    except KeyboardInterrupt:
+        # 捕捉用户手动终止训练的异常
+        print('手动终止训练')
+        model_save_path = "../Test/model_interrupted_1.pth"
+        torch.save(model.state_dict(), model_save_path)
+        print(f"当前模型已保存到：{model_save_path}")
 
 # 定义一个超参数空间，用于搜佳超参数
 learning_rate = 3e-5
@@ -434,7 +499,7 @@ num_epochs = 10
 test_f1, model = train_model(learning_rate, num_epochs)
 
 # 保存训练好的模型
-model_save_path = "../Test/best_model_7.pth"
+model_save_path = "../Test/best_model_9.pth"
 torch.save(model, model_save_path)
 print(f"使用指定的超参数训练的模型已保存到：{model_save_path}")
 print(f"测试集 F1 分数：{test_f1}")
