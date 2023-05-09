@@ -12,8 +12,12 @@ import copy
 # from pytorchtools import EarlyStopping
 import torch.utils.data as Data
 from torch.utils.tensorboard import SummaryWriter
-import subprocess
-import webbrowser
+# import subprocess
+# import webbrowser
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+import warnings
+# 忽略所有的警告
+warnings.filterwarnings("ignore")
 
 
 class Logger(object):
@@ -318,48 +322,39 @@ def train_model(learning_rate, num_epochs):
 
                 out = torch.sigmoid(out)  # 将预测值转化为概率
                 out = torch.where(out > 0.5, torch.ones_like(out), torch.zeros_like(out))  # 找到概率大于0.5的位置，并将其设为1，否则设为0
+
                 predicted_labels = []
                 true_labels = []
-                f2 = 0
-                f2_precision = 0
-                f2_recall = 0
+
                 for j in range(len(out)):
                     predicted_label = torch.where(out[j] == 1)[0].tolist()  # 将位置索引转换为标签
                     predicted_labels.append(predicted_label)
                     true_label = torch.where(labels[j] == 1)[0].tolist()
                     true_labels.append(true_label)
 
-                    # 计算F1分数
-                    predicted_set = set(predicted_label)
-                    true_set = set(true_label)
-
-                    TP = len(predicted_set.intersection(true_set))
-                    FP = len(predicted_set - true_set)
-                    FN = len(true_set - predicted_set)
-                    precision = TP / (TP + FP) if TP + FP else 0
-                    recall = TP / (TP + FN) if TP + FN else 0
-                    f1 = calculate_f1(precision, recall)
-
-                    f2 = f1 + f2
-                    f2_precision = precision + f2_precision
-                    f2_recall = recall + f2_recall
-                f2 = f2 / len(out)
-                f2_precision = f2_precision / len(out)
-                f2_recall = f2_recall / len(out)
+                # 计算准确率
+                accuracy = accuracy_score(true_labels, predicted_labels)
+                # 计算精确率
+                # precision = precision_score(true_labels, predicted_labels, average='macro')
+                # 计算召回率
+                recall = recall_score(true_labels, predicted_labels, average='macro')
+                # 计算F1分数
+                f1 = f1_score(true_labels, predicted_labels, average='macro')
 
                 train_loss += loss.item()
-                train_f1 += f2
-                train_acc += f2_precision
-                train_recall += f2_recall
+                train_f1 += f1
+                train_acc += accuracy
+                train_recall += recall
                 train_count += 1
                 print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
-                print(
-                    f"第{epoch + 1}周期：第{i + 1}轮训练, loss：{loss.item()}, 第{i + 1}轮训练集F1准确率为:{f2},第{i + 1}轮训练集accuracy:{f2_precision},第{i + 1}轮训练集recall:{f2_recall}")
+                print(f"第{epoch + 1}周期：第{i + 1}轮训练, loss：{loss.item()}, 第{i + 1}轮训练集F1准确率为:{f1},第{i + 1}轮训练集accuracy:{accuracy},第{i + 1}轮训练集recall:{recall}")
 
             train_loss /= train_count
             train_f1 /= train_count
             train_acc /= train_count
             train_recall /= train_count
+
+            print(f"------------总训练集F1为{train_f1},总accuracy为{train_acc}，总recall为{train_recall}------------")
 
             writer.add_scalar('Train Loss', train_loss, epoch)  # 记录训练损失
             writer.add_scalar('Train F1', train_f1, epoch)  # 记录训练F1得分
@@ -373,6 +368,7 @@ def train_model(learning_rate, num_epochs):
             val_acc = 0
             val_recall = 0
             val_count = 0
+
             with torch.no_grad():
                 for i, (input_ids, attention_mask, labels) in enumerate(val_loader):
                     out = model(input_ids=input_ids, attention_mask=attention_mask)
@@ -390,45 +386,35 @@ def train_model(learning_rate, num_epochs):
                     #     # 结束模型训练
                     #     break
 
-                    f2 = 0
-                    f2_precision = 0
-                    f2_recall = 0
                     for j in range(len(out)):
                         predicted_label = torch.where(out[j] == 1)[0].tolist()  # 将位置索引转换为标签
                         predicted_labels.append(predicted_label)
                         true_label = torch.where(labels[j] == 1)[0].tolist()
                         true_labels.append(true_label)
 
-                        # 计算F1分数
-                        predicted_set = set(predicted_label)
-                        true_set = set(true_label)
-
-                        TP = len(predicted_set.intersection(true_set))
-                        FP = len(predicted_set - true_set)
-                        FN = len(true_set - predicted_set)
-                        precision = TP / (TP + FP) if TP + FP else 0
-                        recall = TP / (TP + FN) if TP + FN else 0
-                        f1 = calculate_f1(precision, recall)
-                        f2 = f1 + f2
-                        f2_precision = precision + f2_precision
-                        f2_recall = recall + f2_recall
-                    average_val_f1 = f2 / len(out)
-                    f2_precision = f2_precision / len(out)
-                    f2_recall = f2_recall / len(out)
+                    # 计算准确率
+                    accuracy = accuracy_score(true_labels, predicted_labels)
+                    # 计算精确率
+                    # precision = precision_score(true_labels, predicted_labels, average='macro')
+                    # 计算召回率
+                    recall = recall_score(true_labels, predicted_labels, average='macro')
+                    # 计算F1分数
+                    f1 = f1_score(true_labels, predicted_labels, average='macro')
 
                     val_loss += loss.item()
-                    val_f1 += average_val_f1
-                    val_acc += f2_precision
-                    val_recall += f2_recall
+                    val_f1 += f1
+                    val_acc += accuracy
+                    val_recall += recall
                     val_count += 1
                     print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
-                    print(
-                        f"第{epoch + 1}周期：第{i + 1}轮验证, loss：{loss.item()}, 第{i + 1}轮验证集F1准确率为:{average_val_f1},第{i + 1}轮验证集accuracy:{f2_precision},第{i + 1}轮验证集recall:{f2_recall}")
+                    print(f"第{epoch + 1}周期：第{i + 1}轮验证, loss：{loss.item()}, 第{i + 1}轮验证集F1准确率为:{f1},第{i + 1}轮验证集accuracy:{accuracy},第{i + 1}轮验证集recall:{recall}")
 
                 val_loss /= val_count
                 val_f1 /= val_count
                 val_acc /= val_count
                 val_recall /= val_count
+
+                print(f"------------总验证集F1为{val_f1},总accuracy为{val_acc}，总recall为{val_recall}------------")
 
                 writer.add_scalar('Val Loss', val_loss, epoch)  # 记录验证损失
                 writer.add_scalar('Val F1', val_f1, epoch)  # 记录验证F1得分
@@ -457,46 +443,36 @@ def train_model(learning_rate, num_epochs):
                 predicted_labels = []
                 true_labels = []
 
-                f2 = 0
-                f2_precision = 0
-                f2_recall = 0
                 for j in range(len(out)):
                     predicted_label = torch.where(out[j] == 1)[0].tolist()  # 将位置索引转换为标签
                     predicted_labels.append(predicted_label)
                     true_label = torch.where(labels[j] == 1)[0].tolist()
                     true_labels.append(true_label)
 
-                    # 计算F1分数
-                    predicted_set = set(predicted_label)
-                    true_set = set(true_label)
+                # 计算准确率
+                accuracy = accuracy_score(true_labels, predicted_labels)
+                # 计算精确率
+                # precision = precision_score(true_labels, predicted_labels, average='macro')
+                # 计算召回率
+                recall = recall_score(true_labels, predicted_labels, average='macro')
+                # 计算F1分数
+                f1 = f1_score(true_labels, predicted_labels, average='macro')
 
-                    TP = len(predicted_set.intersection(true_set))
-                    FP = len(predicted_set - true_set)
-                    FN = len(true_set - predicted_set)
-                    precision = TP / (TP + FP) if TP + FP else 0
-                    recall = TP / (TP + FN) if TP + FN else 0
-                    f1 = calculate_f1(precision, recall)
-                    f2 = f1 + f2
-                    f2_precision = precision + f2_precision
-                    f2_recall = recall + f2_recall
-                average_test_f1 = f2 / len(out)
-                f2_precision = f2_precision / len(out)
-                f2_recall = f2_recall / len(out)
-
-                test_f1 += average_test_f1
-                test_acc += f2_precision
-                test_recall += f2_recall
+                test_loss += loss.item()
+                test_f1 += f1
+                test_acc += accuracy
+                test_recall += recall
                 test_count += 1
 
                 print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
-                print(f"第{i + 1}轮测试, loss：{loss.item()}, 第{i + 1}轮测试集F1准确率为:{average_test_f1},第{i + 1}轮测试集accuracy:{f2_precision},第{i + 1}轮测试集recall:{f2_recall}")
+                print(f"第{i + 1}轮测试, loss：{loss.item()}, 第{i + 1}轮测试集F1准确率为:{f1},第{i + 1}轮测试集accuracy:{accuracy},第{i + 1}轮测试集recall:{recall}")
 
             test_loss /= test_count
             test_f1 /= test_count
             test_acc /= test_count
             test_recall /= test_count
 
-        print(f"------------总测试集F1为{test_f1},总accuracy为{test_acc}，总recall为{test_count}------------")
+        print(f"------------总测试集F1为{test_f1},总accuracy为{test_acc}，总recall为{test_recall}------------")
 
         return test_f1, best_model_state
 
