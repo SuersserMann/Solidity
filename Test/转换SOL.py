@@ -1,18 +1,19 @@
 import os
 import pandas as pd
-import xlsxwriter
 
 # 指定要读取的文件夹路径和Excel文件路径
-folder_path = "C:/Users/13663/Desktop/tx-origin"
-excel_path = "C:/Users/13663/Desktop/234.xlsx"
-
-# 创建一个空的DataFrame，用于存储所有文件的内容
-df = pd.DataFrame(columns=['content'])
+folder_path = "C:/Users/13663/Desktop/test/arithmetic"
+excel_path = "C:/Users/13663/Desktop/345.xlsx"
 
 # 读取已有的Excel文件（如果存在）并将其内容添加到DataFrame中
 if os.path.exists(excel_path):
+    # 读取已有数据，并获取最后一行的行号
     existing_df = pd.read_excel(excel_path)
-    df = pd.concat([df, existing_df], ignore_index=True)
+    last_row = existing_df.shape[0] + 1
+else:
+    # 如果文件不存在，从第一行开始写入数据
+    last_row = 1
+    existing_df = pd.DataFrame(columns=['source_code', 'slither'])
 
 # 遍历文件夹中的所有文件
 for file_name in os.listdir(folder_path):
@@ -24,15 +25,11 @@ for file_name in os.listdir(folder_path):
             lines = f.readlines()
             content = ''.join(lines)
             content = content.replace("\n", "").replace("\r", "").replace("\t", "").replace(" ","")
-            # 在每个数据对应的第二列添加数字"1"
-            df = pd.concat([df, pd.DataFrame({'content': [content]})], ignore_index=True)
-            df.loc[df.index[-1], 'number'] = 1
+            # 在每个数据对应的第一列和第二列添加数据
+            existing_df.loc[last_row, 'source_code'] = content
+            existing_df.loc[last_row, 'slither'] = 2
+            # 更新最后一行的行号
+            last_row += 1
 
-# 创建一个Excel文件写入器
-writer = pd.ExcelWriter(excel_path, engine='xlsxwriter')
-
-# 将DataFrame中的内容写入Excel表格的第一列和第二列
-df.to_excel(writer, sheet_name='Sheet1', startrow=0, startcol=0, index=False, header=False)
-
-# 保存并关闭Excel文件
-writer.close()
+# 将数据写入Excel文件
+existing_df.to_excel(excel_path, index=False, header=True)

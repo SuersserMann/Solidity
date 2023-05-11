@@ -20,8 +20,10 @@ import json
 import torch.utils.data as data
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 import warnings
+
 # 忽略所有的警告
 warnings.filterwarnings("ignore")
+
 
 class Logger(object):
     def __init__(self, filename):
@@ -58,12 +60,6 @@ def truncate_list(lst, length):
             for i in range(0, len(item), length):
                 new_lst.append(item[i:i + length])
     return new_lst
-
-
-def bytecode_to_opcodes(bytecode):
-    bytecode = bytecode.replace("0x", "")
-    disassembled = disassemble_hex(bytecode).replace("\n", " ")
-    return disassembled
 
 
 def calculate_f1(precision, recall):
@@ -158,22 +154,91 @@ test_dataset = Dataset('cfn-test-A.json')
 token = AutoTokenizer.from_pretrained("bert-base-chinese")
 
 
+def find_indices(cfn_spans_start, word_start):
+    matches = []
+    for i, num in enumerate(word_start):
+        if num in cfn_spans_start:
+            matches.append(i)
+    return matches
+
+
 def collate_fn(data):
-    sentence_ids = [i[0] for i in data]
-    cfn_spanss = [i[1] for i in data]
-    frames = [i[2] for i in data]
-    targets = [i[3] for i in data]
-    texts = [i[4] for i in data]
-    words = [i[5] for i in data]
-    frame_indexs = [i[6] for i in data]
+    sentence_ids = []
+    cfn_spanss = []
+    frames = []
+    targets = []
+    texts = []
+    words = []
+    frame_indexs = []
+    result = []
+    for i in data:
+
+        sentence_ids.append(i[0])
+        cfn_spanss_one = i[1]
+        cfn_spanss.append(cfn_spanss_one)
+        frames.append(i[2])
+
+        targets_one = i[3]
+        targets.append(targets_one)
+
+        texts_one = i[4]
+        texts.append(texts_one)
+        words_one = i[5]
+        words.append(words_one)
+        frame_indexs.append(i[6])
+
+        new_text = []
+        for word_info in words_one:
+            word_text = texts_one[word_info['start']:word_info['end'] + 1]
+            word_pos = word_info['pos']
+            word_str = f"{word_text} ({word_pos})"
+            new_text.append(word_str)
+
+        # 将每个单词及其词性标注组成的字符串都括起来
+        word_start = [elem['start'] for elem in words_one]
+        word_end = [elem['end'] for elem in words_one]
+        target_start = [targets_one['start']]
+        target_end = [targets_one['end']]
+        cfn_spans_start = [elem['start'] for elem in cfn_spanss_one]
+        cfn_spans_end = [elem['end'] for elem in cfn_spanss_one]
+        cfn_spans_fe_name = [elem['fe_name'] for elem in cfn_spanss_one]
+        target_pos = [targets_one['pos']]
+
+        cfn_spans_find_start = find_indices(cfn_spans_start, word_start)
+        cfn_spans_find_end = find_indices(cfn_spans_end, word_end)
+        target_find_start = find_indices(target_start, word_start)
+        target_find_end = find_indices(target_end, word_end)
+        z = 0
+        for ics in cfn_spans_find_start:
+            new_text[ics] = f"({cfn_spans_fe_name[z]}:{new_text[ics]}"
+            z += 1
+        z = 0
+        for ice in cfn_spans_find_end:
+            new_text[ice] = f"{new_text[ice]})"
+            z += 1
+        z = 0
+        for its in target_find_start:
+            new_text[its] = f"({target_pos[z]}:{new_text[its]}"
+            z += 1
+        z = 0
+        for ite in target_find_end:
+            new_text[ite] = f"{new_text[ite]})"
+            z += 1
+
+        str_my_list = ''.join(new_text)
+        str_my_list = str_my_list.replace('"', '').replace(',', '').replace("'", "").replace(" ", "")
+        result.append(str_my_list)
+
+
     # 编码
     data = token.batch_encode_plus(
         # sentence_ids,
         # cfn_spanss,
         # frames,
         # targets,
-        texts,
+        # texts,
         # words,
+        result,
         padding='max_length',
         truncation=True,
         max_length=510,
@@ -189,13 +254,13 @@ def collate_fn(data):
 
 # batchsize不能太大，明白了，数据太少了，刚才的数据被drop_last丢掉了
 train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
-                                           batch_size=640,  # 是每个批轮的大小，也就是每轮处理的样本数量。
+                                           batch_size=128,  # 是每个批轮的大小，也就是每轮处理的样本数量。
                                            collate_fn=collate_fn,  # 是一个函数，用于对每个批轮中的样本进行编码和处理。
                                            shuffle=True,  # 是一个布尔值，表示是否对数据进行随机重排。
                                            drop_last=False)  # 是一个布尔值，表示是否在最后一个批轮中舍弃不足一个批轮大小的数据
 
 val_loader = torch.utils.data.DataLoader(dataset=val_dataset,
-                                         batch_size=640,  # 是每个批轮的大小，也就是每轮处理的样本数量。
+                                         batch_size=128,  # 是每个批轮的大小，也就是每轮处理的样本数量。
                                          collate_fn=collate_fn,  # 是一个函数，用于对每个批轮中的样本进行编码和处理。
                                          shuffle=False,  # 是一个布尔值，表示是否对数据进行随机重排。
                                          drop_last=False)  # 是一个布尔值，表示是否在最后一个批轮中舍弃不足一个批轮大小的数据
@@ -208,9 +273,9 @@ test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
 
 
 def train_model(learning_rate, num_epochs):
-    writer = SummaryWriter('runs')
+    writer = SummaryWriter()
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)  # 使用传入的学习率
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)  # 使用传入的学习率
     criterion = torch.nn.CrossEntropyLoss()
 
     # patience = 20  # 当验证集损失在连续20次训练周期中都没有得到降低时，停止模型训练，以防止模型过拟合
@@ -256,7 +321,7 @@ def train_model(learning_rate, num_epochs):
                 # 计算准确率
                 accuracy = accuracy_score(true_labels, predicted_labels)
                 # 计算精确率
-                #precision = precision_score(true_labels, predicted_labels, average='macro')
+                # precision = precision_score(true_labels, predicted_labels, average='macro')
                 # 计算召回率
                 recall = recall_score(true_labels, predicted_labels, average='macro')
                 # 计算F1分数
@@ -268,7 +333,8 @@ def train_model(learning_rate, num_epochs):
                 train_recall += recall
                 train_count += 1
                 print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
-                print(f"第{epoch + 1}周期：第{i + 1}轮训练, loss：{loss.item()}, 第{i + 1}轮训练集F1准确率为:{f1},第{i + 1}轮训练集accuracy:{accuracy},第{i + 1}轮训练集recall:{recall}")
+                print(
+                    f"第{epoch + 1}周期：第{i + 1}轮训练, loss：{loss.item()}, 第{i + 1}轮训练集F1准确率为:{f1},第{i + 1}轮训练集accuracy:{accuracy},第{i + 1}轮训练集recall:{recall}")
 
             train_loss /= train_count
             train_f1 /= train_count
@@ -330,7 +396,8 @@ def train_model(learning_rate, num_epochs):
                     val_count += 1
 
                     print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
-                    print(f"第{epoch + 1}周期：第{i + 1}轮验证, loss：{loss.item()}, 第{i + 1}轮验证集F1准确率为:{f1},第{i + 1}轮验证集accuracy:{accuracy},第{i + 1}轮验证集recall:{recall}")
+                    print(
+                        f"第{epoch + 1}周期：第{i + 1}轮验证, loss：{loss.item()}, 第{i + 1}轮验证集F1准确率为:{f1},第{i + 1}轮验证集accuracy:{accuracy},第{i + 1}轮验证集recall:{recall}")
 
                 val_loss /= val_count
                 val_f1 /= val_count
@@ -357,20 +424,20 @@ def train_model(learning_rate, num_epochs):
     except KeyboardInterrupt:
         # 捕捉用户手动终止训练的异常
         print('手动终止训练')
-        model_save_path = "../Test/model_interrupted_1.pth"
+        model_save_path = "../比赛/model_interrupted_1.pth"
         torch.save(model.state_dict(), model_save_path)
         print(f"当前模型已保存到：{model_save_path}")
 
 
 # 定义一个超参数空间，用于搜佳超参数
-learning_rate = 3e-5
-num_epochs = 200
+learning_rate = 1e-4
+num_epochs = 500
 
 # 使用指定的超参数训练模型
 test_f1, model = train_model(learning_rate, num_epochs)
 
 # 保存训练好的模型
-model_save_path = "../Test/best_model_9.pth"
+model_save_path = "../比赛/best_model_10.pth"
 torch.save(model, model_save_path)
 print(f"使用指定的超参数训练的模型已保存到：{model_save_path}")
 print(f"测试集 F1 分数：{test_f1}")
