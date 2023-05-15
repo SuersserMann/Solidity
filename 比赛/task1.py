@@ -93,10 +93,7 @@ class Model(torch.nn.Module):
         # 定义一个全连接层，输入维度为768，输出维度为6
         # self.fc = torch.nn.Linear(768, 6)
         self.fc = torch.nn.Sequential(
-            torch.nn.Linear(768, 720),
-            torch.nn.ReLU(),
-            torch.nn.Dropout(p=0.1),
-            torch.nn.Linear(720, 695)
+            torch.nn.Linear(768,695)
         )  # 添加多层神经网络
 
     def forward(self, input_ids, attention_mask):
@@ -254,13 +251,13 @@ def collate_fn(data):
 
 # batchsize不能太大，明白了，数据太少了，刚才的数据被drop_last丢掉了
 train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
-                                           batch_size=128,  # 是每个批轮的大小，也就是每轮处理的样本数量。
+                                           batch_size=256,  # 是每个批轮的大小，也就是每轮处理的样本数量。
                                            collate_fn=collate_fn,  # 是一个函数，用于对每个批轮中的样本进行编码和处理。
                                            shuffle=True,  # 是一个布尔值，表示是否对数据进行随机重排。
                                            drop_last=False)  # 是一个布尔值，表示是否在最后一个批轮中舍弃不足一个批轮大小的数据
 
 val_loader = torch.utils.data.DataLoader(dataset=val_dataset,
-                                         batch_size=128,  # 是每个批轮的大小，也就是每轮处理的样本数量。
+                                         batch_size=256,  # 是每个批轮的大小，也就是每轮处理的样本数量。
                                          collate_fn=collate_fn,  # 是一个函数，用于对每个批轮中的样本进行编码和处理。
                                          shuffle=False,  # 是一个布尔值，表示是否对数据进行随机重排。
                                          drop_last=False)  # 是一个布尔值，表示是否在最后一个批轮中舍弃不足一个批轮大小的数据
@@ -275,11 +272,10 @@ test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
 def train_model(learning_rate, num_epochs):
     writer = SummaryWriter()
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)  # 使用传入的学习率
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)  # 使用传入的学习率
     criterion = torch.nn.CrossEntropyLoss()
 
-    # patience = 20  # 当验证集损失在连续20次训练周期中都没有得到降低时，停止模型训练，以防止模型过拟合
-    # early_stopping = EarlyStopping(patience, verbose=True)
+    lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.98)
 
     best_val_f1 = 0  # 初始化最佳验证集 F1 分数
     best_model_state = None  # 保存最佳模型参数
@@ -289,6 +285,8 @@ def train_model(learning_rate, num_epochs):
     #
     # # 打开 TensorBoard 网页
     # webbrowser.open_new_tab('http://localhost:6006/')
+    patience = 10
+    counter = 0
 
     try:
         for epoch in range(num_epochs):
@@ -364,16 +362,6 @@ def train_model(learning_rate, num_epochs):
                     predicted_labels = []
                     true_labels = []
 
-                    # early_stopping(loss, model)
-                    # # 若满足 early stopping 要求
-                    # if early_stopping.early_stop:
-                    #     print("Early stopping")
-                    #     # 结束模型训练
-                    #     break
-
-                    f2 = 0
-                    f2_precision = 0
-                    f2_recall = 0
                     for j in range(len(labels)):
                         predicted_label = out[j].tolist()  # 将位置索引转换为标签
                         predicted_labels.append(predicted_label)
@@ -414,24 +402,34 @@ def train_model(learning_rate, num_epochs):
             if val_f1 > best_val_f1:
                 best_val_f1 = val_f1
                 best_model_state = copy.deepcopy(model.state_dict())
+                counter = 0
+            else:
+                counter += 1
 
+            if counter >= patience:
+                print("Early stopping!")
+                # 保存当前模型
+                torch.save(model.state_dict(), "model_early_1.pt")
+                break
+            lr_scheduler.step()
+            print(f"学习率为{lr_scheduler.get_last_lr()}")
         # 加载具有最佳验证集性能的模型参数
         model.load_state_dict(best_model_state)
 
         print(f"验证集 F1 分数：{val_f1}")
-        return val_f1, best_model_state
+        return best_val_f1, best_model_state
 
     except KeyboardInterrupt:
         # 捕捉用户手动终止训练的异常
         print('手动终止训练')
-        model_save_path = "../比赛/model_interrupted_1.pth"
+        model_save_path = "比赛/model_interrupted_1.pth"
         torch.save(model.state_dict(), model_save_path)
         print(f"当前模型已保存到：{model_save_path}")
 
 
 # 定义一个超参数空间，用于搜佳超参数
-learning_rate = 1e-4
-num_epochs = 500
+learning_rate = 1e-2
+num_epochs = 50
 
 # 使用指定的超参数训练模型
 test_f1, model = train_model(learning_rate, num_epochs)
