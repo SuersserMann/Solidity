@@ -469,7 +469,7 @@ def train_model(learning_rate, num_epochs):
                 val_acc = calculate_accuracy(train_fn, train_fp, train_tn, train_tp)
                 val_precision = calculate_precision(train_fn, train_fp, train_tn, train_tp)
                 val_recall = calculate_recall(train_fn, train_fp, train_tn, train_tp)
-
+                val_compare_f1=sum(val_f1) / labels_num
                 print(
                     f"------------总验证集loss为{val_loss},总F1为{val_f1},总accuracy为{val_acc}，总precision为{val_precision}，总recall为{val_recall}------------")
                 print(
@@ -482,8 +482,8 @@ def train_model(learning_rate, num_epochs):
                 writer.add_scalar('Train Precision', sum(val_precision) / labels_num, epoch)  # 记录训练精准度
                 writer.add_scalar('Train Recall', sum(val_recall) / labels_num, epoch)
 
-            if val_f1 > best_val_f1:
-                best_val_f1 = val_f1
+            if val_compare_f1 > best_val_f1:
+                best_val_f1 = val_compare_f1
                 best_model_state = copy.deepcopy(model.state_dict())
                 counter = 0
             else:
@@ -501,17 +501,12 @@ def train_model(learning_rate, num_epochs):
         # 测试
         model.eval()
         test_loss = 0
-        test_f1 = 0
-        test_acc = 0
-        test_recall = 0
         test_count = 0
-        test_precision = 0
+
         train_fn = [0] * 4
         train_fp = [0] * 4
         train_tn = [0] * 4
         train_tp = [0] * 4
-
-        label_metrics = {}  # 存储每个单独标签的评估指标
 
         with torch.no_grad():
             for i, (input_ids, attention_mask, labels) in enumerate(test_loader):
