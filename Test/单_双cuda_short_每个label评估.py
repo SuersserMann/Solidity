@@ -22,6 +22,8 @@ import warnings
 
 # 忽略所有的警告
 warnings.filterwarnings("ignore")
+
+
 class Logger(object):
     def __init__(self, filename):
         self.terminal = sys.stdout
@@ -112,6 +114,27 @@ class Model(torch.nn.Module):
 
         return out
 
+# class Model(torch.nn.Module):
+#     def __init__(self):
+#         super().__init__()
+#         self.pretrained = AutoModel.from_pretrained("bert-base-chinese")
+#         self.pretrained.to(device)
+#         for param in self.pretrained.parameters():
+#             param.requires_grad_(False)
+#         self.gru = torch.nn.GRU(768, 768, num_layers=2, batch_first=True)
+#         self.fc = torch.nn.Sequential(
+#             torch.nn.Linear(768, 512),
+#             torch.nn.ReLU(),
+#             torch.nn.Dropout(p=0.1),
+#             torch.nn.Linear(512, 4)
+#         )
+#
+#     def forward(self, input_ids, attention_mask):
+#         out = self.pretrained(input_ids=input_ids, attention_mask=attention_mask)
+#         out = out.last_hidden_state[:, 0]  # Only keep the last hidden state
+#         out, _ = self.gru(out.unsqueeze(0))
+#         out = self.fc(out.squeeze(0))
+#         return out
 
 # 实例化下游任务模型并将其移动到 GPU 上 (如果可用)
 model = Model()
@@ -119,7 +142,7 @@ model = nn.DataParallel(model, device_ids=device_ids)
 model.to(device)
 
 # 从 Excel 文件中读取数据
-data = pd.read_csv('456.csv', encoding='GBK')
+data = pd.read_csv('01.csv', encoding='GBK')
 
 # 将数据存储到 DataFrame 中，并选择需要的列
 df = pd.DataFrame(data, columns=['slither', 'source_code'])
@@ -129,8 +152,8 @@ all_dataset = datasets.Dataset.from_pandas(df)
 
 all_dataset = list(zip(all_dataset['slither'], all_dataset['source_code']))
 train_ratio = 0.8  # 训练集比例
-val_ratio = 0.1  # 验证集比例
-test_ratio = 0.1  # 测试集比例
+val_ratio = 0.19  # 验证集比例
+test_ratio = 0.01  # 测试集比例
 random.shuffle(all_dataset)
 
 # 计算训练集、验证集和测试集的数量
@@ -188,22 +211,22 @@ def collate_fn(data):
     #     amount += len(cutted)
     # labels = cut_labels
     # bytecodes = cutted_list
-    amount = 0
-    cutted_list = []
-    cut_labels = []
-    for i, cut_sourcecode in enumerate(source_codes):
-        new_labels = []
-
-        new_labels.append(cut_sourcecode)
-        cutted = truncate_list(new_labels, 2048)
-        for gg in cutted:
-            cutted_list.append(gg)
-
-        for dd in range(len(cutted)):
-            cut_labels.insert(i + amount, labels[i])
-        amount += len(cutted)
-    labels = cut_labels
-    source_codes = cutted_list
+    # amount = 0
+    # cutted_list = []
+    # cut_labels = []
+    # for i, cut_sourcecode in enumerate(source_codes):
+    #     new_labels = []
+    #
+    #     new_labels.append(cut_sourcecode)
+    #     cutted = truncate_list(new_labels, 2048)
+    #     for gg in cutted:
+    #         cutted_list.append(gg)
+    #
+    #     for dd in range(len(cutted)):
+    #         cut_labels.insert(i + amount, labels[i])
+    #     amount += len(cutted)
+    # labels = cut_labels
+    # source_codes = cutted_list
     # 编码
     data = token.batch_encode_plus(
         source_codes,
@@ -276,11 +299,19 @@ def calculate_confusion_matrix(predicted_values, true_values):
 
     return fn, fp, tn, tp
 
+
 def calculate_accuracy(fn, fp, tn, tp):
-    total_samples = sum(fn) + sum(fp) + sum(tn) + sum(tp)
-    correct_predictions = sum(tp) + sum(tn)
-    accuracy = correct_predictions / total_samples if total_samples > 0 else 0
-    return accuracy
+    # total_samples = sum(fn) + sum(fp) + sum(tn) + sum(tp)
+    # correct_predictions = sum(tp) + sum(tn)
+    # accuracy = correct_predictions / total_samples if total_samples > 0 else 0
+    # return accuracy
+    num_classes = len(fn)
+    accuracy_scores = []
+    for i in range(num_classes):
+        precision = (tp[i] + tn[i]) / (fn[i]+tp[i]+fp[i]+tn[i]) if (fn[i]+tp[i]+fp[i]+tn[i]) > 0 else 0
+        accuracy_scores.append(precision)
+
+    return accuracy_scores
 
 
 def calculate_precision(fn, fp, tn, tp):
@@ -327,7 +358,7 @@ def train_model(learning_rate, num_epochs):
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)  # 使用传入的学习率
     criterion = torch.nn.BCEWithLogitsLoss()
 
-    lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.98)
+    lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.99)
     # patience = 20  # 当验证集损失在连续20次训练周期中都没有得到降低时，停止模型训练，以防止模型过拟合
     # early_stopping = EarlyStopping(patience, verbose=True)
 
@@ -394,7 +425,7 @@ def train_model(learning_rate, num_epochs):
 
                 train_count += 1
 
-                #print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
+                # print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
                 print(
                     f"第{epoch + 1}周期：第{i + 1}轮训练, loss：{loss.item()}, 第{i + 1}轮训练集F1准确率为:{f1},第{i + 1}轮训练集accuracy:{accuracy},第{i + 1}轮训练集precision:{precision},第{i + 1}轮训练集recall:{recall}")
 
@@ -406,12 +437,12 @@ def train_model(learning_rate, num_epochs):
             print(
                 f"------------总训练集单个标签loss为{train_loss},总训练集F1为{train_f1},总accuracy为{train_acc}，总precision为{train_precision},总recall为{train_recall}------------")
             print(
-                f"------------总训练集loss为{train_loss},总F1为{sum(train_f1) / labels_num},总accuracy为{train_acc}，总precision为{sum(train_precision) / labels_num},总recall为{sum(train_recall) / labels_num}------------")
+                f"------------总训练集loss为{train_loss},总F1为{sum(train_f1) / labels_num},总accuracy为{sum(train_acc) /labels_num}，总precision为{sum(train_precision) / labels_num},总recall为{sum(train_recall) / labels_num}------------")
             print(f"------------总fn为{train_fn},总fp为{train_fp}，总tn为{train_tn}，总tp为{train_tp}")
 
             writer.add_scalar('Train Loss', train_loss, epoch)  # 记录训练损失
             writer.add_scalar('Train F1', sum(train_f1) / labels_num, epoch)  # 记录训练F1得分
-            writer.add_scalar('Train Accuracy', train_acc, epoch)  # 记录训练准确度
+            writer.add_scalar('Train Accuracy', sum(train_acc) / labels_num, epoch)  # 记录训练准确度
             writer.add_scalar('Train Precision', sum(train_precision) / labels_num, epoch)  # 记录训练精准度
             writer.add_scalar('Train Recall', sum(train_recall) / labels_num, epoch)  # 记录训练召回率
 
@@ -460,7 +491,7 @@ def train_model(learning_rate, num_epochs):
                     val_loss += loss.item()
                     val_count += 1
 
-                    #print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
+                    # print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
                     print(
                         f"第{epoch + 1}周期：第{i + 1}轮验证, loss：{loss.item()}, 第{i + 1}轮验证集F1准确率为:{f1},第{i + 1}轮验证集accuracy:{accuracy},第{i + 1}轮验证集recall:{recall}")
 
@@ -469,16 +500,16 @@ def train_model(learning_rate, num_epochs):
                 val_acc = calculate_accuracy(train_fn, train_fp, train_tn, train_tp)
                 val_precision = calculate_precision(train_fn, train_fp, train_tn, train_tp)
                 val_recall = calculate_recall(train_fn, train_fp, train_tn, train_tp)
-                val_compare_f1=sum(val_f1) / labels_num
+                val_compare_f1 = sum(val_f1) / labels_num
                 print(
                     f"------------总验证集loss为{val_loss},总F1为{val_f1},总accuracy为{val_acc}，总precision为{val_precision}，总recall为{val_recall}------------")
                 print(
-                    f"------------总测试集loss为{val_loss},总F1为{sum(val_f1) / labels_num},总accuracy为{val_acc}，总precision为{sum(val_precision) / labels_num},总recall为{sum(val_recall) / labels_num}------------")
+                    f"------------总测试集loss为{val_loss},总F1为{sum(val_f1) / labels_num},总accuracy为{sum(val_acc) / labels_num}，总precision为{sum(val_precision) / labels_num},总recall为{sum(val_recall) / labels_num}------------")
                 print(f"------------总fn为{train_fn},总fp为{train_fp}，总tn为{train_tn}，总tp为{train_tp}")
 
                 writer.add_scalar('Train Loss', val_loss, epoch)  # 记录训练损失
                 writer.add_scalar('Train F1', sum(val_f1) / labels_num, epoch)  # 记录训练F1得分
-                writer.add_scalar('Train Accuracy', val_acc, epoch)  # 记录训练准确度
+                writer.add_scalar('Train Accuracy', sum(val_acc) / labels_num, epoch)  # 记录训练准确度
                 writer.add_scalar('Train Precision', sum(val_precision) / labels_num, epoch)  # 记录训练精准度
                 writer.add_scalar('Train Recall', sum(val_recall) / labels_num, epoch)
 
@@ -554,7 +585,7 @@ def train_model(learning_rate, num_epochs):
         print(
             f"------------总测试集单个标签loss为{test_loss},总F1为{test_f1},总accuracy为{test_acc}，总precision为{test_precision},总recall为{test_recall}------------")
         print(
-            f"------------总测试集loss为{test_loss},总F1为{sum(test_f1) / labels_num},总accuracy为{test_acc}，总precision为{sum(test_precision) / labels_num},总recall为{sum(test_recall) / labels_num}------------")
+            f"------------总测试集loss为{test_loss},总F1为{sum(test_f1) / labels_num},总accuracy为{sum(test_acc) / labels_num}，总precision为{sum(test_precision) / labels_num},总recall为{sum(test_recall) / labels_num}------------")
         print(f"------------总fn为{train_fn},总fp为{train_fp}，总tn为{train_tn}，总tp为{train_tp}")
         return test_f1, best_model_state
 
@@ -568,13 +599,13 @@ def train_model(learning_rate, num_epochs):
 
 # 定义一个超参数空间，用于搜佳超参数
 learning_rate = 1e-3
-num_epochs = 2
+num_epochs = 40
 
 # 使用指定的超参数训练模型
 test_f1, model = train_model(learning_rate, num_epochs)
 
 # 保存训练好的模型
-model_save_path = "best_model_05_19_01.pth"
+model_save_path = "best_model_05_25_03.pth"
 torch.save(model, model_save_path)
 print(f"使用指定的超参数训练的模型已保存到：{model_save_path}")
 print(f"测试集 F1 分数：{test_f1}")
