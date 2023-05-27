@@ -38,10 +38,18 @@ def calculate_confusion_matrix(predicted_values, true_values):
 
 
 def calculate_accuracy(fn, fp, tn, tp):
-    total_samples = sum(fn) + sum(fp) + sum(tn) + sum(tp)
-    correct_predictions = sum(tp) + sum(tn)
-    accuracy = correct_predictions / total_samples if total_samples > 0 else 0
-    return accuracy
+    # total_samples = sum(fn) + sum(fp) + sum(tn) + sum(tp)
+    # correct_predictions = sum(tp) + sum(tn)
+    # accuracy = correct_predictions / total_samples if total_samples > 0 else 0
+    # return accuracy
+    num_classes = len(fn)
+    accuracy_scores = []
+    for i in range(num_classes):
+        precision = (tp[i] + tn[i]) / (fn[i]+tp[i]+fp[i]+tn[i]) if (fn[i]+tp[i]+fp[i]+tn[i]) > 0 else 0
+        accuracy_scores.append(precision)
+
+    return accuracy_scores
+
 
 
 def calculate_precision(fn, fp, tn, tp):
@@ -260,7 +268,7 @@ test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
 
 criterion = torch.nn.BCEWithLogitsLoss()
 
-model.load_state_dict(torch.load('best_model_13.pth'))
+model.load_state_dict(torch.load('best_model_05_22_01.pth.pth'))
 
 model.eval()
 test_loss = 0
@@ -321,5 +329,5 @@ with torch.no_grad():
 print(
     f"------------总测试集单个标签loss为{test_loss},总F1为{test_f1},总accuracy为{test_acc}，总precision为{test_precision},总recall为{test_recall}------------")
 print(
-    f"------------总测试集loss为{test_loss},总F1为{sum(test_f1)/labels_num},总accuracy为{test_acc}，总precision为{sum(test_precision)/labels_num},总recall为{sum(test_recall)/labels_num}------------")
+    f"------------总测试集loss为{test_loss},总F1为{sum(test_f1)/labels_num},总accuracy为{sum(test_acc)/labels_num}，总precision为{sum(test_precision)/labels_num},总recall为{sum(test_recall)/labels_num}------------")
 print(f"------------总fn为{train_fn},总fp为{train_fp}，总tn为{train_tn}，总tp为{train_tp}")
