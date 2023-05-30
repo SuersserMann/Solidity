@@ -55,7 +55,7 @@ class Model(torch.nn.Module):
         for param in self.pretrained.parameters():
             param.requires_grad_(False)
         self.lstm = nn.LSTM(768, 384, num_layers=2, batch_first=True, bidirectional=True)
-        self.rfc = nn.Linear(768, 6)
+        self.rfc = nn.Linear(768, 4)
 
     def forward(self, input_ids, attention_mask):
         out = self.pretrained(input_ids=input_ids, attention_mask=attention_mask)
@@ -184,12 +184,12 @@ def collate_fn(data):
 
         label = [0] * len_text
 
-        if target_start is not None:
-            label[target_start[0]] = 3
-
-        if target_start is not None and target_end is not None:
-            for x in range(target_start[0] + 1, target_end[0]+1):
-                label[x] = 4
+        # if target_start is not None:
+        #     label[target_start[0]] = 3
+        #
+        # if target_start is not None and target_end is not None:
+        #     for x in range(target_start[0] + 1, target_end[0]+1):
+        #         label[x] = 4
         for jx in range(len(cfn_spans_start)):
             if cfn_spans_start is not None:
                 label[cfn_spans_start[jx]] = 1
@@ -221,8 +221,8 @@ def collate_fn(data):
     lens = data['input_ids'].shape[1]
 
     for i in range(len(labels)):
-        labels[i] = [5] + labels[i]
-        labels[i] += [5] * lens
+        labels[i] = [3] + labels[i]
+        labels[i] += [3] * lens
         labels[i] = labels[i][:lens]
 
     input_ids = data['input_ids'].to(device)
@@ -242,7 +242,7 @@ train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
 val_loader = torch.utils.data.DataLoader(dataset=val_dataset,
                                          batch_size=256,
                                          collate_fn=collate_fn,
-                                         shuffle=False,
+                                         shuffle=True,
                                          drop_last=False)
 
 test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
@@ -251,7 +251,7 @@ test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
                                           shuffle=False,
                                           drop_last=False)
 
-model.load_state_dict(torch.load('task2_best_model_3.pth'))
+model.load_state_dict(torch.load('task2_best_model_8.pth'))
 
 model.eval()
 val_loss = 0
@@ -279,8 +279,8 @@ with torch.no_grad():
             predicted_label = out[j].tolist()
 
             true_label = labels[j].tolist()
-            t_first_index = true_label.index(5)
-            t_second_index = true_label.index(5, t_first_index + 1)
+            t_first_index = true_label.index(3)
+            t_second_index = true_label.index(3, t_first_index + 1)
             t_modified_label = true_label[t_first_index:t_second_index + 1]
             true_labels.append(t_modified_label)
 
@@ -304,7 +304,7 @@ with torch.no_grad():
         val_precision += precision
         val_recall += recall
         val_count += 1
-        print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
+        #print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
         print(
             f"第{i + 1}轮验证, loss：{loss.item()}, 第{i + 1}轮验证集F1准确率为:{f1},第{i + 1}轮验证集precision:{precision},第{i + 1}轮训练集recall:{recall}")
 
@@ -315,9 +315,3 @@ with torch.no_grad():
 
     print(
         f"----------loss为{val_loss},总验证集F1为{val_f1},总precision为{val_precision}，总recall为{val_recall}------------")
-
-
-
-
-
-

@@ -25,30 +25,30 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
-class Logger(object):
-    def __init__(self, filename):
-        self.terminal = sys.stdout
-        self.filename = filename
-        self.log = open(self.filename, "a")
-
-    def write(self, message):
-        self.terminal.write(message)
-        self.log.write(message)
-
-    def flush(self):
-        pass
-
-
-now = datetime.datetime.now()
-filename = "log_{:%Y-%m-%d_%H-%M-%S}.txt".format(now)
-path = os.path.abspath(os.path.dirname(__file__))
-log_dir_path = os.path.join(path, "log")
-log_file_path = os.path.join(log_dir_path, filename)
-
-if not os.path.exists(log_dir_path):
-    os.makedirs(log_dir_path)
-
-sys.stdout = Logger(log_file_path)
+# class Logger(object):
+#     def __init__(self, filename):
+#         self.terminal = sys.stdout
+#         self.filename = filename
+#         self.log = open(self.filename, "a")
+#
+#     def write(self, message):
+#         self.terminal.write(message)
+#         self.log.write(message)
+#
+#     def flush(self):
+#         pass
+#
+#
+# now = datetime.datetime.now()
+# filename = "log_{:%Y-%m-%d_%H-%M-%S}.txt".format(now)
+# path = os.path.abspath(os.path.dirname(__file__))
+# log_dir_path = os.path.join(path, "log")
+# log_file_path = os.path.join(log_dir_path, filename)
+#
+# if not os.path.exists(log_dir_path):
+#     os.makedirs(log_dir_path)
+#
+# sys.stdout = Logger(log_file_path)
 
 
 def truncate_list(lst, length):
@@ -153,6 +153,64 @@ def find_indices(cfn_spans_start, word_start):
             matches.append(i)
     return matches
 
+def get_value_by_pos(pos):
+    mapping = {
+        '': 100,
+        'e': 101,
+        'r': 102,
+        'i': 103,
+        'd': 104,
+        'u': 105,
+        'nh': 106,
+        'ws': 107,
+        'v': 108,
+        'ni': 109,
+        'm': 110,
+        'k': 111,
+        'b': 112,
+        'c': 113,
+        'nd': 114,
+        'n': 115,
+        'a': 116,
+        'wp': 117,
+        'o': 118,
+        'nt': 119,
+        'h': 120,
+        'nl': 121,
+        'p': 122,
+        'q': 123,
+        'j': 124,
+        'nz': 125,
+        'ns': 126,
+        '无': 127,
+        'e无': 128,
+        'r无': 129,
+        'i无': 130,
+        'd无': 131,
+        'u无': 132,
+        'nh无': 133,
+        'ws无': 132,
+        'v无': 135,
+        'ni无': 136,
+        'm无': 137,
+        'k无': 138,
+        'b无': 139,
+        'c无': 140,
+        'nd无': 141,
+        'n无': 142,
+        'a无': 143,
+        'wp无': 144,
+        'o无': 145,
+        'nt无': 146,
+        'h无': 147,
+        'nl无': 148,
+        'p无': 149,
+        'q无': 150,
+        'j无': 151,
+        'nz无': 152,
+        'ns无': 153
+    }
+    return mapping.get(pos)
 
 def collate_fn(data):
     sentence_ids = []
@@ -163,6 +221,11 @@ def collate_fn(data):
     words = []
     frame_indexs = []
     result = []
+    characters_list = []
+    # labels = []
+    result_list = []
+    c_t = 0
+    c_e = 0
     for i in data:
         sentence_ids.append(i[0])
         cfn_spanss_one = i[1]
@@ -178,16 +241,96 @@ def collate_fn(data):
         words.append(words_one)
         frame_indexs.append(i[6])
 
+        target_start = targets_one['start']
+        target_end = targets_one['end']
+
+        list1 = []
+        for z in range(len(words_one)):
+            if words_one[z]['start'] == target_start:
+                for g in range(target_start, target_end + 1):
+                    list1.append(texts_one[g])
+            else:
+                list1.append(words_one[z]['pos'])
+
+        list2 = [get_value_by_pos(pos) for pos in list1]
+        string_list = [str(num) for num in list2]
+
+        for i, item in enumerate(words_one):
+            if item["start"] == target_start:
+                c_t = i
+        for i, item in enumerate(words_one):
+            if item["end"] == target_end:
+                c_e = i
+        a=0
+
+        for zg in range(c_t, c_e + 1 + (target_end - target_start)):
+            string_list[zg] = texts_one[target_start + a]
+            a += 1
+        result_list.append(string_list)
+
+        # for g in range(target_start, target_end + 1):
+        #     string_list[g] = texts_one[g]
+
+        # for u in range(target_end - target_start + 1):
+        #     for g in range(target_start, target_end + 1):
+        #         string_list[g] = texts_one[g]
+        #         # string_list[g] = "154"
+
         new_text = []
 
-        word_text = texts_one[targets_one['start']:targets_one['end'] + 1]
-        word_pos = targets_one['pos']
-        word_str = f"{word_text}{word_pos}"
-        new_text.append(word_str)
+        # characters = [char for char in texts_one]
+        #
+        # characters_list.append(characters)
+        len_text = len(string_list)
 
-        str_my_list = ''.join(new_text)
-        str_my_list = str_my_list.replace('"', '').replace(',', '').replace("'", "").replace(" ", "")
-        result.append(str_my_list)
+        cfn_spans_start = [elem['start'] for elem in cfn_spanss_one]
+        cfn_spans_end = [elem['end'] for elem in cfn_spanss_one]
+        # cfn_spans_combined = [[start, end] for start, end in zip(target_start, target_end)]
+        # target_combined = [target_start[0], target_end[0]]
+
+        label = [0] * len_text
+
+        # if target_start is not None:
+        #     label[target_start[0]] = 3
+        #
+        # if target_start is not None and target_end is not None:
+        #     for x in range(target_start[0] + 1, target_end[0] + 1):
+        #         label[x] = 4
+
+        index_start = []
+        index_end = []
+        for jz in range(len(cfn_spans_start)):
+            c_start = cfn_spans_start[jz]
+            c_end = cfn_spans_end[jz]
+            c_len = target_end - target_start + 1
+            if c_start < target_start:
+                for i, item in enumerate(words_one):
+                    if item["start"] == c_start:
+                        index_start.append(i)
+                        break
+                for i, item in enumerate(words_one):
+                    if item["end"] == c_end:
+                        index_end.append(i)
+                        break
+            else:
+                for i, item in enumerate(words_one):
+                    if item["start"] == c_start:
+                        index_start.append(i + c_len - 1)
+                        break
+                for i, item in enumerate(words_one):
+                    if item["end"] == c_end:
+                        index_end.append(i + c_len - 1)
+                        break
+
+        # for jx in range(len(index_start)):
+        #     if index_start is not None:
+        #         label[index_start[jx]] = 1
+        #
+        #     if index_start is not None and index_end is not None:
+        #         for x in range(index_start[jx] + 1, index_end[jx] + 1):
+        #             label[x] = 2
+        #
+        # labels.append(label)
 
     # 编码
     data = token.batch_encode_plus(
@@ -197,19 +340,24 @@ def collate_fn(data):
         # targets,
         # texts,
         # words,
-        result,
+        # result,
+        result_list,
 
-        padding='max_length',
+        padding=True,
         truncation=True,
-        max_length=510,
+        # max_length=512,
         return_tensors='pt',  # 返回pytorch模型
+        is_split_into_words=True,
         return_length=True)
+
+    lens = data['input_ids'].shape[1]
 
     input_ids = data['input_ids'].to(device)
     attention_mask = data['attention_mask'].to(device)
     labels = torch.LongTensor(frame_indexs).to(device)
 
     return input_ids, attention_mask, labels
+
 
 
 # batchsize不能太大，明白了，数据太少了，刚才的数据被drop_last丢掉了
@@ -301,11 +449,6 @@ def train_model(learning_rate, num_epochs):
             print(
                 f"----------第{epoch + 1}周期,loss为{train_loss},总训练集F1为{train_f1},总accuracy为{train_acc}，总recall为{train_recall}------------")
 
-            writer.add_scalar('Train Loss', train_loss, epoch)  # 记录训练损失
-            writer.add_scalar('Train F1', train_f1, epoch)  # 记录训练F1得分
-            writer.add_scalar('Train Accuracy', train_acc, epoch)  # 记录训练准确度
-            writer.add_scalar('Train Recall', train_recall, epoch)  # 记录训练召回率
-
             # 验证
             model.eval()
             val_loss = 0
@@ -355,10 +498,6 @@ def train_model(learning_rate, num_epochs):
                 print(
                     f"------------第{epoch + 1}周期,loss为{val_loss}，总验证集F1为{val_f1},总accuracy为{val_acc}，总recall为{val_recall}------------")
 
-                writer.add_scalar('Val Loss', val_loss, epoch)  # 记录验证损失
-                writer.add_scalar('Val F1', val_f1, epoch)  # 记录验证F1得分
-                writer.add_scalar('Val Accuracy', val_acc, epoch)  # 记录验证准确度
-                writer.add_scalar('Val Recall', val_recall, epoch)  # 记录验证召回率
 
             if val_acc > best_accuracy:
                 best_accuracy = val_acc
@@ -370,7 +509,7 @@ def train_model(learning_rate, num_epochs):
             if counter >= patience:
                 print("Early stopping!")
                 # 保存当前模型
-                torch.save(best_model_state, "task1_model_early_2.pt")
+                torch.save(best_model_state, "task1_26_model_early_1.pt")
                 break
             lr_scheduler.step()
             print(f"学习率为{lr_scheduler.get_last_lr()}")
@@ -396,8 +535,7 @@ num_epochs = 200
 test_f1, model = train_model(learning_rate, num_epochs)
 
 # 保存训练好的模型
-model_save_path = "task1_best_model_2.pt"
+model_save_path = "task1_26_best_model_1.pt"
 torch.save(model, model_save_path)
 print(f"使用指定的超参数训练的模型已保存到：{model_save_path}")
 print(test_f1)
-

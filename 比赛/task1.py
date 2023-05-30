@@ -409,12 +409,11 @@ def train_model(learning_rate, num_epochs):
             if counter >= patience:
                 print("Early stopping!")
                 # 保存当前模型
-                # torch.save(model.state_dict(), "c_model_early_1.pt")
+                torch.save(best_model_state, "c_model_early_1.pt")
                 break
             lr_scheduler.step()
             print(f"学习率为{lr_scheduler.get_last_lr()}")
-        # 加载具有最佳验证集性能的模型参数
-        model.load_state_dict(best_model_state)
+
 
         print(f"验证集 F1 分数：{best_val_f1}")
         return best_val_f1, best_model_state
@@ -422,8 +421,8 @@ def train_model(learning_rate, num_epochs):
     except KeyboardInterrupt:
         # 捕捉用户手动终止训练的异常
         print('手动终止训练')
-        model_save_path = "c_model_interrupted_1.pth"
-        torch.save(model.state_dict(), model_save_path)
+        model_save_path = "c_model_interrupted_1.pt"
+        torch.save(model, model_save_path)
         print(f"当前模型已保存到：{model_save_path}")
 
 
@@ -435,7 +434,7 @@ num_epochs = 100
 test_f1, model = train_model(learning_rate, num_epochs)
 
 # 保存训练好的模型
-model_save_path = "c_best_model_2.pth"
+model_save_path = "c_best_model_2.pt"
 torch.save(model, model_save_path)
 print(f"使用指定的超参数训练的模型已保存到：{model_save_path}")
 

@@ -55,18 +55,15 @@ class Model(torch.nn.Module):
         for param in self.pretrained.parameters():
             param.requires_grad_(False)
         self.lstm = nn.LSTM(768, 384, num_layers=2, batch_first=True, bidirectional=True)
-        self.linear = nn.Linear(768, 100)
-        self.rfc = nn.Linear(100, 8)
+        self.rfc = nn.Linear(768, 6)
 
     def forward(self, input_ids, attention_mask):
         out = self.pretrained(input_ids=input_ids, attention_mask=attention_mask)
         out = out.last_hidden_state  # Keep the last hidden state for all positions
         out, _ = self.lstm(out)
-        out = self.linear(out)
         out = self.rfc(out)
-        out = F.softmax(out, dim=-1)
+        # out = F.softmax(out, dim=-1)
         return out
-
 
 # 实例化下游任务模型并将其移动到 GPU 上 (如果可用)
 model = Model()
@@ -187,28 +184,20 @@ def collate_fn(data):
         label = [0] * len_text
 
         if target_start is not None:
-            label[target_start[0]] = 1
-
-        if target_start[0] != target_end[0] & target_end[0] is not None:
-            label[target_end[0]] = 3
+            label[target_start[0]] = 3
 
         if target_start is not None and target_end is not None:
-            for x in range(target_start[0] + 1, target_end[0]):
-                label[x] = 2
-
+            for x in range(target_start[0] + 1, target_end[0] + 1):
+                label[x] = 4
         for jx in range(len(cfn_spans_start)):
             if cfn_spans_start is not None:
-                label[cfn_spans_start[jx]] = 4
-
-            if cfn_spans_start[jx] != cfn_spans_end[jx] & cfn_spans_end[jx] is not None:
-                label[cfn_spans_end[jx]] = 6
+                label[cfn_spans_start[jx]] = 1
 
             if cfn_spans_start is not None and cfn_spans_end is not None:
-                for x in range(cfn_spans_start[jx] + 1, cfn_spans_end[jx]):
-                    label[x] = 5
+                for x in range(cfn_spans_start[jx] + 1, cfn_spans_end[jx] + 1):
+                    label[x] = 2
 
         labels.append(label)
-
 
     # 编码
     data = token.batch_encode_plus(
@@ -231,8 +220,8 @@ def collate_fn(data):
     lens = data['input_ids'].shape[1]
 
     for i in range(len(labels)):
-        labels[i] = [7] + labels[i]
-        labels[i] += [7] * lens
+        labels[i] = [5] + labels[i]
+        labels[i] += [5] * lens
         labels[i] = labels[i][:lens]
 
     input_ids = data['input_ids'].to(device)
@@ -250,9 +239,9 @@ train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
                                            drop_last=False)
 
 val_loader = torch.utils.data.DataLoader(dataset=val_dataset,
-                                         batch_size=64,
+                                         batch_size=512,
                                          collate_fn=collate_fn,
-                                         shuffle=False,
+                                         shuffle=True,
                                          drop_last=False)
 
 test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
@@ -263,8 +252,6 @@ test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
 
 
 def train_model(learning_rate, num_epochs):
-    writer = SummaryWriter()
-
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)  # 使用传入的学习率
     criterion = torch.nn.CrossEntropyLoss()
 
@@ -272,7 +259,7 @@ def train_model(learning_rate, num_epochs):
 
     best_val_f1 = 0  # 初始化最佳验证集 F1 分数
     best_model_state = None  # 保存最佳模型参数
-
+    best_val_loss = 1
     patience = 10
     counter = 0
 
@@ -301,30 +288,40 @@ def train_model(learning_rate, num_epochs):
 
                 predicted_labels = []
                 true_labels = []
-
+                list5 = []
+                list6 = []
                 for j in range(len(labels)):
                     predicted_label = out[j].tolist()
 
                     true_label = labels[j].tolist()
-                    t_first_index = true_label.index(7)
-                    t_second_index = true_label.index(7, t_first_index + 1)
+                    t_first_index = true_label.index(5)
+                    t_second_index = true_label.index(5, t_first_index + 1)
                     t_modified_label = true_label[t_first_index:t_second_index + 1]
                     true_labels.append(t_modified_label)
 
                     modified_label = predicted_label[t_first_index:t_second_index + 1]
                     predicted_labels.append(modified_label)
+                    for z, j in zip(predicted_labels, true_labels):
+                        list3 = []
+                        list4 = []
+                        for m, n in zip(z, j):
+                            if m != 0 or n != 0:
+                                list3.append(m)
+                                list4.append(n)
+                        list5.append(list3)
+                        list6.append(list4)
 
-                y_true = [label for sublist in true_labels for label in sublist]
-                y_pred = [label for sublist in predicted_labels for label in sublist]
+                y_true = [label for sublist in list6 for label in sublist]
+                y_pred = [label for sublist in list5 for label in sublist]
 
                 # 计算准确率
                 # accuracy = accuracy_score(true_labels, predicted_labels)
                 # 计算精确率
-                precision = precision_score(y_true, y_pred, average='micro')
+                precision = precision_score(y_true, y_pred, average='macro')
                 # 计算召回率
-                recall = recall_score(y_true, y_pred, average='micro')
+                recall = recall_score(y_true, y_pred, average='macro')
                 # 计算F1分数
-                f1 = f1_score(y_true, y_pred, average='micro')
+                f1 = f1_score(y_true, y_pred, average='macro')
 
                 train_loss += loss.item()
                 train_f1 += f1
@@ -333,7 +330,7 @@ def train_model(learning_rate, num_epochs):
                 train_count += 1
                 # print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
                 print(
-                  f"第{epoch + 1}周期：第{i + 1}轮训练, loss：{loss.item()}, 第{i + 1}轮训练集F1准确率为:{f1},第{i + 1}轮训练集precision:{precision},第{i + 1}轮训练集recall:{recall}")
+                    f"第{epoch + 1}周期：第{i + 1}轮训练, loss：{loss.item()}, 第{i + 1}轮训练集F1准确率为:{f1},第{i + 1}轮训练集precision:{precision},第{i + 1}轮训练集recall:{recall}")
 
             train_loss /= train_count
             train_f1 /= train_count
@@ -350,9 +347,9 @@ def train_model(learning_rate, num_epochs):
             val_acc = 0
             val_recall = 0
             val_count = 0
-            val_precision=0
+            val_precision = 0
             with torch.no_grad():
-                for i, (input_ids, attention_mask, labels) in enumerate(train_loader):
+                for i, (input_ids, attention_mask, labels) in enumerate(val_loader):
                     # 遍历数据集，并将数据转移到GPU上
                     out = model(input_ids=input_ids, attention_mask=attention_mask)
                     # 进行前向传播，得到预测值out
@@ -364,30 +361,41 @@ def train_model(learning_rate, num_epochs):
 
                     predicted_labels = []
                     true_labels = []
-
+                    list5 = []
+                    list6 = []
                     for j in range(len(labels)):
                         predicted_label = out[j].tolist()
 
                         true_label = labels[j].tolist()
-                        t_first_index = true_label.index(7)
-                        t_second_index = true_label.index(7, t_first_index + 1)
+                        t_first_index = true_label.index(5)
+                        t_second_index = true_label.index(5, t_first_index + 1)
                         t_modified_label = true_label[t_first_index:t_second_index + 1]
                         true_labels.append(t_modified_label)
 
                         modified_label = predicted_label[t_first_index:t_second_index + 1]
                         predicted_labels.append(modified_label)
 
-                    y_true = [label for sublist in true_labels for label in sublist]
-                    y_pred = [label for sublist in predicted_labels for label in sublist]
+                        for z, j in zip(predicted_labels, true_labels):
+                            list3 = []
+                            list4 = []
+                            for m, n in zip(z, j):
+                                if m != 0 or n != 0:
+                                    list3.append(m)
+                                    list4.append(n)
+                            list5.append(list3)
+                            list6.append(list4)
+
+                    y_true = [label for sublist in list6 for label in sublist]
+                    y_pred = [label for sublist in list5 for label in sublist]
 
                     # 计算准确率
                     # accuracy = accuracy_score(true_labels, predicted_labels)
                     # 计算精确率
-                    precision = precision_score(y_true, y_pred, average='micro')
+                    precision = precision_score(y_true, y_pred, average='macro')
                     # 计算召回率
-                    recall = recall_score(y_true, y_pred, average='micro')
+                    recall = recall_score(y_true, y_pred, average='macro')
                     # 计算F1分数
-                    f1 = f1_score(y_true, y_pred, average='micro')
+                    f1 = f1_score(y_true, y_pred, average='macro')
 
                     val_loss += loss.item()
                     val_f1 += f1
@@ -396,19 +404,19 @@ def train_model(learning_rate, num_epochs):
                     val_count += 1
                     # print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
                     print(
-                       f"第{epoch + 1}周期：第{i + 1}轮训练, loss：{loss.item()}, 第{i + 1}轮训练集F1准确率为:{f1},第{i + 1}轮训练集precision:{precision},第{i + 1}轮训练集recall:{recall}")
+                        f"第{epoch + 1}周期：第{i + 1}轮验证, loss：{loss.item()}, 第{i + 1}轮验证集F1准确率为:{f1},第{i + 1}轮验证集precision:{precision},第{i + 1}轮训练集recall:{recall}")
 
-                val_loss /= train_count
-                val_f1 /= train_count
-                val_precision /= train_count
-                val_recall /= train_count
+                val_loss /= val_count
+                val_f1 /= val_count
+                val_precision /= val_count
+                val_recall /= val_count
 
                 print(
-                    f"----------第{epoch + 1}周期,loss为{val_loss},总验证集F1为{val_f1},总precision为{train_precision}，总recall为{train_recall}------------")
+                    f"----------第{epoch + 1}周期,loss为{val_loss},总验证集F1为{val_f1},总precision为{val_precision}，总recall为{val_recall}------------")
 
             if val_f1 > best_val_f1:
                 best_val_f1 = val_f1
-                best_model_state = copy.deepcopy(model.state_dict())
+                best_model_state = model.state_dict()
                 counter = 0
             else:
                 counter += 1
@@ -416,12 +424,10 @@ def train_model(learning_rate, num_epochs):
             if counter >= patience:
                 print("Early stopping!")
                 # 保存当前模型
-                # torch.save(model.state_dict(), "c_model_early_1.pt")
+                torch.save(model.state_dict(), "task2_model_early_2.pt")
                 break
             lr_scheduler.step()
             print(f"学习率为{lr_scheduler.get_last_lr()}")
-        # 加载具有最佳验证集性能的模型参数
-        model.load_state_dict(best_model_state)
 
         print(f"验证集 F1 分数：{val_f1}")
         return best_val_f1, best_model_state
@@ -429,19 +435,20 @@ def train_model(learning_rate, num_epochs):
     except KeyboardInterrupt:
         # 捕捉用户手动终止训练的异常
         print('手动终止训练')
-        model_save_path = "c_model_interrupted_1.pth"
+        model_save_path = "c_model_interrupted_2.pth"
         torch.save(model.state_dict(), model_save_path)
         print(f"当前模型已保存到：{model_save_path}")
 
 
 # 定义一个超参数空间，用于搜佳超参数
-learning_rate = 0.01
-num_epochs = 50
+learning_rate = 0.0001
+num_epochs = 100
 
 # 使用指定的超参数训练模型
 test_f1, model = train_model(learning_rate, num_epochs)
 
 # 保存训练好的模型
-model_save_path = "task2_best_model_1.pth"
+model_save_path = "task2_best_model_6.pth"
 torch.save(model, model_save_path)
 print(f"使用指定的超参数训练的模型已保存到：{model_save_path}")
+print(test_f1)

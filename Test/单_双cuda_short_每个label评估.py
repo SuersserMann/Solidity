@@ -527,6 +527,7 @@ def train_model(learning_rate, num_epochs):
                 break
             lr_scheduler.step()
             print(f"学习率为{lr_scheduler.get_last_lr()}")
+
         # 加载具有最佳验证集性能的模型参数
         model.load_state_dict(best_model_state)
         # 测试
