@@ -91,7 +91,7 @@ class Model(torch.nn.Module):
         self.fc = torch.nn.Sequential(
             torch.nn.Linear(768, 512),
             torch.nn.ReLU(),
-            torch.nn.Dropout(p=0.5),
+            torch.nn.Dropout(p=0),
             torch.nn.Linear(512, 695)
         )
 

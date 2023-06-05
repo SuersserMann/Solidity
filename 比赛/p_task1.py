@@ -2,7 +2,7 @@ import re
 import numpy as np
 import torch
 from torch import nn
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoModel, AutoTokenizer, AutoModelForMaskedLM
 from pyevmasm import disassemble_hex
 import sys
 import os
@@ -23,6 +23,32 @@ import warnings
 
 # 忽略所有的警告
 warnings.filterwarnings("ignore")
+
+
+# class Logger(object):
+#     def __init__(self, filename):
+#         self.terminal = sys.stdout
+#         self.filename = filename
+#         self.log = open(self.filename, "a")
+#
+#     def write(self, message):
+#         self.terminal.write(message)
+#         self.log.write(message)
+#
+#     def flush(self):
+#         pass
+#
+#
+# now = datetime.datetime.now()
+# filename = "log_{:%Y-%m-%d_%H-%M-%S}.txt".format(now)
+# path = os.path.abspath(os.path.dirname(__file__))
+# log_dir_path = os.path.join(path, "log")
+# log_file_path = os.path.join(log_dir_path, filename)
+#
+# if not os.path.exists(log_dir_path):
+#     os.makedirs(log_dir_path)
+#
+# sys.stdout = Logger(log_file_path)
 
 
 def truncate_list(lst, length):
@@ -90,16 +116,6 @@ for z, frame_idx in enumerate(frame_info):
     frame2idx[frame_idx['frame_name']] = z
 
 
-def index2frame(index):
-    frame = None
-    for frame_name, idx in frame2idx.items():
-        if idx == index:
-            frame = frame_name
-        else:
-            print("错误")
-        return frame
-
-
 class Dataset(data.Dataset):
     def __init__(self, filename):
         with open(filename, 'r', encoding='utf-8') as f:
@@ -127,6 +143,7 @@ val_dataset = Dataset('cfn-dev.json')
 test_dataset = Dataset('cfn-test-A.json')
 
 # 加载字典和分词工具
+# token = AutoTokenizer.from_pretrained("bert-base-chinese")
 token = AutoTokenizer.from_pretrained("bert-base-chinese")
 
 
@@ -138,6 +155,66 @@ def find_indices(cfn_spans_start, word_start):
     return matches
 
 
+def get_value_by_pos(pos):
+    mapping = {
+        '': 100,
+        'e': 101,
+        'r': 102,
+        'i': 103,
+        'd': 104,
+        'u': 105,
+        'nh': 106,
+        'ws': 107,
+        'v': 108,
+        'ni': 109,
+        'm': 110,
+        'k': 111,
+        'b': 112,
+        'c': 113,
+        'nd': 114,
+        'n': 115,
+        'a': 116,
+        'wp': 117,
+        'o': 118,
+        'nt': 119,
+        'h': 120,
+        'nl': 121,
+        'p': 122,
+        'q': 123,
+        'j': 124,
+        'nz': 125,
+        'ns': 126,
+        '无': 127,
+        'e无': 128,
+        'r无': 129,
+        'i无': 130,
+        'd无': 131,
+        'u无': 132,
+        'nh无': 133,
+        'ws无': 132,
+        'v无': 135,
+        'ni无': 136,
+        'm无': 137,
+        'k无': 138,
+        'b无': 139,
+        'c无': 140,
+        'nd无': 141,
+        'n无': 142,
+        'a无': 143,
+        'wp无': 144,
+        'o无': 145,
+        'nt无': 146,
+        'h无': 147,
+        'nl无': 148,
+        'p无': 149,
+        'q无': 150,
+        'j无': 151,
+        'nz无': 152,
+        'ns无': 153
+    }
+    return mapping.get(pos)
+
+
 def collate_fn(data):
     sentence_ids = []
     cfn_spanss = []
@@ -147,6 +224,11 @@ def collate_fn(data):
     words = []
     frame_indexs = []
     result = []
+    characters_list = []
+    # labels = []
+    result_list = []
+    c_t = 0
+    c_e = 0
     for i in data:
         sentence_ids.append(i[0])
         cfn_spanss_one = i[1]
@@ -162,16 +244,30 @@ def collate_fn(data):
         words.append(words_one)
         frame_indexs.append(i[6])
 
-        new_text = []
+        target_start = targets_one['start']
+        target_end = targets_one['end']
+        cfn_spans_start = [span["start"] for span in cfn_spanss_one]
+        cfn_spans_end = [span["end"] for span in cfn_spanss_one]
+        pos_list = []
 
-        word_text = texts_one[targets_one['start']:targets_one['end'] + 1]
-        word_pos = targets_one['pos']
-        word_str = f"{word_text}{word_pos}"
-        new_text.append(word_str)
+        for word in words_one:
+            if any(start <= word["start"] <= end for start, end in zip(cfn_spans_start, cfn_spans_end)):
+                pos_list.append(word["pos"])
+            else:
+                pos_list.append('0')
+        target_start_index = None
+        target_end_index = None
+        for i, word in enumerate(words_one):
+            if word["start"] == target_start:
+                target_start_index = i
+            if word["end"] == target_end:
+                target_end_index = i
 
-        str_my_list = ''.join(new_text)
-        str_my_list = str_my_list.replace('"', '').replace(',', '').replace("'", "").replace(" ", "")
-        result.append(str_my_list)
+        target_text = [str(num) for num in texts_one[target_start:target_end + 1]]
+        pos_list[target_start_index:target_end_index + 1] = list(target_text)
+
+        pos_list = [str(pos) for pos in pos_list]
+        result_list.append(pos_list)
 
     # 编码
     data = token.batch_encode_plus(
@@ -181,19 +277,43 @@ def collate_fn(data):
         # targets,
         # texts,
         # words,
-        result,
+        # result,
+        result_list,
 
-        padding='max_length',
+        padding=True,
         truncation=True,
-        max_length=510,
+        # max_length=512,
         return_tensors='pt',  # 返回pytorch模型
+        is_split_into_words=True,
         return_length=True)
+
+    lens = data['input_ids'].shape[1]
 
     input_ids = data['input_ids'].to(device)
     attention_mask = data['attention_mask'].to(device)
     labels = torch.LongTensor(frame_indexs).to(device)
 
     return input_ids, attention_mask, labels
+
+
+# batchsize不能太大，明白了，数据太少了，刚才的数据被drop_last丢掉了
+train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
+                                           batch_size=128,
+                                           collate_fn=collate_fn,
+                                           shuffle=True,
+                                           drop_last=False)
+
+val_loader = torch.utils.data.DataLoader(dataset=val_dataset,
+                                         batch_size=128,
+                                         collate_fn=collate_fn,
+                                         shuffle=False,
+                                         drop_last=False)
+
+test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
+                                          batch_size=640,
+                                          collate_fn=collate_fn,
+                                          shuffle=False,
+                                          drop_last=False)
 
 
 # batchsize不能太大，明白了，数据太少了，刚才的数据被drop_last丢掉了

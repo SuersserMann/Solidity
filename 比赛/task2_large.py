@@ -17,6 +17,26 @@ import torch.nn.functional as F
 
 warnings.filterwarnings("ignore")
 
+
+def truncate_list(lst, length):
+    new_lst = []
+    for item in lst:
+        if len(item) <= length:
+            new_lst.append(item)
+        else:
+            for i in range(0, len(item), length):
+                new_lst.append(item[i:i + length])
+    return new_lst
+
+
+def calculate_f1(precision, recall):
+    if (precision + recall) == 0:
+        f1 = 0
+    else:
+        f1 = 2 * (precision * recall) / (precision + recall)
+    return f1
+
+
 print(torch.__version__)
 # 使用cuda
 device_ids = [0, 1]
@@ -30,12 +50,12 @@ print('device=', device)
 class Model(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.pretrained = AutoModel.from_pretrained("bert-base-chinese")
+        self.pretrained = AutoModel.from_pretrained("xlm-roberta-large")
         self.pretrained.to(device)
         for param in self.pretrained.parameters():
             param.requires_grad_(False)
-        self.lstm = nn.LSTM(768, 384, num_layers=2, batch_first=True, bidirectional=True)
-        self.rfc = nn.Linear(768, 3)
+        self.lstm = nn.LSTM(1024, 512, num_layers=2, batch_first=True, bidirectional=True)
+        self.rfc = nn.Linear(1024, 4)
 
     def forward(self, input_ids, attention_mask):
         out = self.pretrained(input_ids=input_ids, attention_mask=attention_mask)
@@ -83,10 +103,11 @@ class Dataset(data.Dataset):
 
 train_dataset = Dataset('cfn-train.json')
 val_dataset = Dataset('cfn-dev.json')
-test_dataset = Dataset('cfn-test-A.json')
+test_dataset = Dataset('cfn-test-B.json')
 
 # 加载字典和分词工具
-token = AutoTokenizer.from_pretrained("bert-base-chinese")
+# token = AutoTokenizer.from_pretrained("bert-base-chinese")
+tokenizer = AutoTokenizer.from_pretrained("xlm-roberta-large")
 
 
 def find_indices(cfn_spans_start, word_start):
@@ -165,11 +186,6 @@ def get_value_by_pos(pos):
     }
     return mapping.get(pos)
 
-def convert_zero_to_one(lst):
-    for i in range(len(lst) - 2):
-        if lst[i] == 1 and lst[i+1] == 0 and lst[i+2] == 1:
-            lst[i+1] = 1
-    return lst
 
 def collate_fn(data):
     sentence_ids = []
@@ -182,9 +198,7 @@ def collate_fn(data):
     result = []
     characters_list = []
     labels = []
-    result_list = []
-    c_t = 0
-    c_e = 0
+    result_list=[]
     for i in data:
         sentence_ids.append(i[0])
         cfn_spanss_one = i[1]
@@ -200,47 +214,40 @@ def collate_fn(data):
         words.append(words_one)
         frame_indexs.append(i[6])
 
-        target_start = targets_one['start']
-        target_end = targets_one['end']
-
         list1 = []
         for z in range(len(words_one)):
-            if words_one[z]['start'] == target_start:
-                for g in range(target_start, target_end + 1):
-                    list1.append(texts_one[g])
-            else:
+            if words_one[z]['end'] - words_one[z]['start'] == 0:
                 list1.append(words_one[z]['pos'])
+            else:
+                for j in range(words_one[z]['end'] - words_one[z]['start'] + 1):
+                    if j == 0:
+                        list1.append(words_one[z]['pos'])
+                    else:
+                        list1.append(f"{words_one[z]['pos']}无")
 
+        # print(list1)
         list2 = [get_value_by_pos(pos) for pos in list1]
         string_list = [str(num) for num in list2]
 
-        for i, item in enumerate(words_one):
-            if item["start"] == target_start:
-                c_t = i
-        for i, item in enumerate(words_one):
-            if item["end"] == target_end:
-                c_e = i
-        a = 0
+        target_start = targets_one['start']
+        target_end = targets_one['end']
+        for u in range(target_end - target_start + 1):
+            for g in range(target_start, target_end + 1):
+                string_list[g] = texts_one[g]
+                # string_list[g] = "154"
 
-        for zg in range(c_t, c_e + 1 + (target_end - target_start)):
-            string_list[zg] = texts_one[target_start + a]
-            a += 1
+        for u in range(len(words_one)):
+            if words_one[u]['pos'] == 'wp':
+                for x in range(words_one[u]['start'], words_one[u]['end'] + 1):
+                    string_list[x] = texts_one[x]
+
         result_list.append(string_list)
-
-        # for g in range(target_start, target_end + 1):
-        #     string_list[g] = texts_one[g]
-
-        # for u in range(target_end - target_start + 1):
-        #     for g in range(target_start, target_end + 1):
-        #         string_list[g] = texts_one[g]
-        #         # string_list[g] = "154"
-
         new_text = []
 
-        # characters = [char for char in texts_one]
-        #
-        # characters_list.append(characters)
-        len_text = len(string_list)
+        characters = [char for char in texts_one]
+
+        characters_list.append(characters)
+        len_text = len(texts_one)
 
         cfn_spans_start = [elem['start'] for elem in cfn_spanss_one]
         cfn_spans_end = [elem['end'] for elem in cfn_spanss_one]
@@ -255,44 +262,18 @@ def collate_fn(data):
         # if target_start is not None and target_end is not None:
         #     for x in range(target_start[0] + 1, target_end[0] + 1):
         #         label[x] = 4
+        for jx in range(len(cfn_spans_start)):
+            if cfn_spans_start is not None:
+                label[cfn_spans_start[jx]] = 1
 
-        index_start = []
-        index_end = []
-        for jz in range(len(cfn_spans_start)):
-            c_start = cfn_spans_start[jz]
-            c_end = cfn_spans_end[jz]
-            c_len = target_end - target_start + 1
-            if c_start < target_start:
-                for i, item in enumerate(words_one):
-                    if item["start"] == c_start:
-                        index_start.append(i)
-                        break
-                for i, item in enumerate(words_one):
-                    if item["end"] == c_end:
-                        index_end.append(i)
-                        break
-            else:
-                for i, item in enumerate(words_one):
-                    if item["start"] == c_start:
-                        index_start.append(i + c_len - 1)
-                        break
-                for i, item in enumerate(words_one):
-                    if item["end"] == c_end:
-                        index_end.append(i + c_len - 1)
-                        break
-
-        for jx in range(len(index_start)):
-            if index_start is not None:
-                label[index_start[jx]] = 1
-
-            if index_start is not None and index_end is not None:
-                for x in range(index_start[jx] + 1, index_end[jx] + 1):
-                    label[x] = 1
+            if cfn_spans_start is not None and cfn_spans_end is not None:
+                for x in range(cfn_spans_start[jx] + 1, cfn_spans_end[jx] + 1):
+                    label[x] = 2
 
         labels.append(label)
 
     # 编码
-    data = token.batch_encode_plus(
+    data = tokenizer.batch_encode_plus(
         # sentence_ids,
         # cfn_spanss,
         # frames,
@@ -312,8 +293,8 @@ def collate_fn(data):
     lens = data['input_ids'].shape[1]
 
     for i in range(len(labels)):
-        labels[i] = [2] + labels[i]
-        labels[i] += [2] * lens
+        labels[i] = [3] + labels[i]
+        labels[i] += [3] * lens
         labels[i] = labels[i][:lens]
 
     input_ids = data['input_ids'].to(device)
@@ -344,14 +325,14 @@ test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
 
 
 def train_model(learning_rate, num_epochs):
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-3)  # 使用传入的学习率
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)  # 使用传入的学习率
     criterion = torch.nn.CrossEntropyLoss()
 
     lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.99)
 
     best_val_f1 = 0  # 初始化最佳验证集 F1 分数
     best_model_state = None  # 保存最佳模型参数
-    best_val_loss = 10
+    best_val_loss = 1
     patience = 5
     counter = 0
 
@@ -386,8 +367,8 @@ def train_model(learning_rate, num_epochs):
                     predicted_label = out[j].tolist()
 
                     true_label = labels[j].tolist()
-                    t_first_index = true_label.index(2)
-                    t_second_index = true_label.index(2, t_first_index + 1)
+                    t_first_index = true_label.index(3)
+                    t_second_index = true_label.index(3, t_first_index + 1)
                     t_modified_label = true_label[t_first_index:t_second_index + 1]
                     true_labels.append(t_modified_label)
 
@@ -450,10 +431,14 @@ def train_model(learning_rate, num_epochs):
                         predicted_label = out[j].tolist()
 
                         true_label = labels[j].tolist()
+                        t_first_index = true_label.index(3)
+                        t_second_index = true_label.index(3, t_first_index + 1)
+                        t_modified_label = true_label[t_first_index:t_second_index + 1]
+                        true_labels.append(t_modified_label)
 
-                        true_labels.append(true_label)
+                        modified_label = predicted_label[t_first_index:t_second_index + 1]
+                        predicted_labels.append(modified_label)
 
-                        predicted_labels.append(predicted_label)
 
                     y_true = [label for sublist in true_labels for label in sublist]
                     y_pred = [label for sublist in predicted_labels for label in sublist]
@@ -494,7 +479,7 @@ def train_model(learning_rate, num_epochs):
             if counter >= patience:
                 print("Early stopping!")
                 # 保存当前模型
-                torch.save(best_model_state, "task2_model_early_7.pt")
+                torch.save(best_model_state, "task2_model_early_6.pt")
                 break
             lr_scheduler.step()
             print(f"学习率为{lr_scheduler.get_last_lr()}")
@@ -506,19 +491,19 @@ def train_model(learning_rate, num_epochs):
         # 捕捉用户手动终止训练的异常
         print('手动终止训练')
         model_save_path = "c_model_interrupted_2.pth"
-        torch.save(model.state_dict(), model_save_path)
+        torch.save(best_model_state, model_save_path)
         print(f"当前模型已保存到：{model_save_path}")
 
 
 # 定义一个超参数空间，用于搜佳超参数
 learning_rate = 0.001
-num_epochs = 100
+num_epochs = 25
 
 # 使用指定的超参数训练模型
-test_f1, model = train_model(learning_rate, num_epochs)
+test_f1, model_x = train_model(learning_rate, num_epochs)
 
 # 保存训练好的模型
-model_save_path = "task2_best_model_19.pth"
-torch.save(model, model_save_path)
+model_save_path = "task2_best_model_14.pth"
+torch.save(model_x, model_save_path)
 print(f"使用指定的超参数训练的模型已保存到：{model_save_path}")
 print(test_f1)

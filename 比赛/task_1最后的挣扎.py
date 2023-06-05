@@ -2,20 +2,73 @@ import re
 import numpy as np
 import torch
 from torch import nn
-from transformers import AutoModel, AutoTokenizer
-
+from transformers import AutoModel, AutoTokenizer, AutoModelForMaskedLM
+from pyevmasm import disassemble_hex
+import sys
+import os
+import datetime
 import copy
-
+# from pytorchtools import EarlyStopping
 import torch.utils.data as Data
 from torch.utils.tensorboard import SummaryWriter
-
+# import subprocess
+# import webbrowser
+# import pandas as pd
+# import datasets
+# import random
 import json
 import torch.utils.data as data
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 import warnings
-import torch.nn.functional as F
 
+# 忽略所有的警告
 warnings.filterwarnings("ignore")
+
+
+# class Logger(object):
+#     def __init__(self, filename):
+#         self.terminal = sys.stdout
+#         self.filename = filename
+#         self.log = open(self.filename, "a")
+#
+#     def write(self, message):
+#         self.terminal.write(message)
+#         self.log.write(message)
+#
+#     def flush(self):
+#         pass
+#
+#
+# now = datetime.datetime.now()
+# filename = "log_{:%Y-%m-%d_%H-%M-%S}.txt".format(now)
+# path = os.path.abspath(os.path.dirname(__file__))
+# log_dir_path = os.path.join(path, "log")
+# log_file_path = os.path.join(log_dir_path, filename)
+#
+# if not os.path.exists(log_dir_path):
+#     os.makedirs(log_dir_path)
+#
+# sys.stdout = Logger(log_file_path)
+
+
+def truncate_list(lst, length):
+    new_lst = []
+    for item in lst:
+        if len(item) <= length:
+            new_lst.append(item)
+        else:
+            for i in range(0, len(item), length):
+                new_lst.append(item[i:i + length])
+    return new_lst
+
+
+def calculate_f1(precision, recall):
+    if (precision + recall) == 0:
+        f1 = 0
+    else:
+        f1 = 2 * (precision * recall) / (precision + recall)
+    return f1
+
 
 print(torch.__version__)
 # 使用cuda
@@ -34,15 +87,19 @@ class Model(torch.nn.Module):
         self.pretrained.to(device)
         for param in self.pretrained.parameters():
             param.requires_grad_(False)
-        self.lstm = nn.LSTM(768, 384, num_layers=2, batch_first=True, bidirectional=True)
-        self.rfc = nn.Linear(768, 3)
+        self.gru = torch.nn.GRU(768, 768, num_layers=2, batch_first=True)
+        self.fc = torch.nn.Sequential(
+            torch.nn.Linear(768, 512),
+            torch.nn.ReLU(),
+            torch.nn.Dropout(p=0.1),
+            torch.nn.Linear(512, 695)
+        )
 
     def forward(self, input_ids, attention_mask):
         out = self.pretrained(input_ids=input_ids, attention_mask=attention_mask)
-        out = out.last_hidden_state  # Keep the last hidden state for all positions
-        out, _ = self.lstm(out)
-        out = self.rfc(out)
-        # out = F.softmax(out, dim=-1)
+        out = out.last_hidden_state[:, 0]  # Only keep the last hidden state
+        out, _ = self.gru(out.unsqueeze(0))
+        out = self.fc(out.squeeze(0))
         return out
 
 
@@ -86,6 +143,7 @@ val_dataset = Dataset('cfn-dev.json')
 test_dataset = Dataset('cfn-test-A.json')
 
 # 加载字典和分词工具
+# token = AutoTokenizer.from_pretrained("bert-base-chinese")
 token = AutoTokenizer.from_pretrained("bert-base-chinese")
 
 
@@ -95,15 +153,6 @@ def find_indices(cfn_spans_start, word_start):
         if num in cfn_spans_start:
             matches.append(i)
     return matches
-
-
-def reshape_and_remove_pad(outs, labels, attention_mask):
-    outs = outs[attention_mask == 1]
-
-    # Reshape 'labels' tensor based on attention_mask
-    labels = labels[attention_mask == 1]
-
-    return outs, labels
 
 
 def get_value_by_pos(pos):
@@ -165,11 +214,6 @@ def get_value_by_pos(pos):
     }
     return mapping.get(pos)
 
-def convert_zero_to_one(lst):
-    for i in range(len(lst) - 2):
-        if lst[i] == 1 and lst[i+1] == 0 and lst[i+2] == 1:
-            lst[i+1] = 1
-    return lst
 
 def collate_fn(data):
     sentence_ids = []
@@ -181,7 +225,7 @@ def collate_fn(data):
     frame_indexs = []
     result = []
     characters_list = []
-    labels = []
+    # labels = []
     result_list = []
     c_t = 0
     c_e = 0
@@ -200,97 +244,38 @@ def collate_fn(data):
         words.append(words_one)
         frame_indexs.append(i[6])
 
-        target_start = targets_one['start']
-        target_end = targets_one['end']
-
-        list1 = []
-        for z in range(len(words_one)):
-            if words_one[z]['start'] == target_start:
-                for g in range(target_start, target_end + 1):
-                    list1.append(texts_one[g])
-            else:
-                list1.append(words_one[z]['pos'])
-
-        list2 = [get_value_by_pos(pos) for pos in list1]
-        string_list = [str(num) for num in list2]
-
-        for i, item in enumerate(words_one):
-            if item["start"] == target_start:
-                c_t = i
-        for i, item in enumerate(words_one):
-            if item["end"] == target_end:
-                c_e = i
-        a = 0
-
-        for zg in range(c_t, c_e + 1 + (target_end - target_start)):
-            string_list[zg] = texts_one[target_start + a]
-            a += 1
-        result_list.append(string_list)
-
-        # for g in range(target_start, target_end + 1):
-        #     string_list[g] = texts_one[g]
-
-        # for u in range(target_end - target_start + 1):
-        #     for g in range(target_start, target_end + 1):
-        #         string_list[g] = texts_one[g]
-        #         # string_list[g] = "154"
-
-        new_text = []
-
-        # characters = [char for char in texts_one]
+        # target_start = targets_one['start']
+        # target_end = targets_one['end']
+        # cfn_spans_start = [span["start"] for span in cfn_spanss_one]
+        # cfn_spans_end = [span["end"] for span in cfn_spanss_one]
+        # pos_list = []
         #
-        # characters_list.append(characters)
-        len_text = len(string_list)
-
-        cfn_spans_start = [elem['start'] for elem in cfn_spanss_one]
-        cfn_spans_end = [elem['end'] for elem in cfn_spanss_one]
-        # cfn_spans_combined = [[start, end] for start, end in zip(target_start, target_end)]
-        # target_combined = [target_start[0], target_end[0]]
-
-        label = [0] * len_text
-
-        # if target_start is not None:
-        #     label[target_start[0]] = 3
+        # for word in words_one:
+        #     if any(start <= word["start"] <= end for start, end in zip(cfn_spans_start, cfn_spans_end)):
+        #         pos_list.append(word["pos"])
+        #     else:
+        #         pos_list.append('0')
+        # target_start_index = None
+        # target_end_index = None
+        # for i, word in enumerate(words_one):
+        #     if word["start"] == target_start:
+        #         target_start_index = i
+        #     if word["end"] == target_end:
+        #         target_end_index = i
         #
-        # if target_start is not None and target_end is not None:
-        #     for x in range(target_start[0] + 1, target_end[0] + 1):
-        #         label[x] = 4
-
-        index_start = []
-        index_end = []
-        for jz in range(len(cfn_spans_start)):
-            c_start = cfn_spans_start[jz]
-            c_end = cfn_spans_end[jz]
-            c_len = target_end - target_start + 1
-            if c_start < target_start:
-                for i, item in enumerate(words_one):
-                    if item["start"] == c_start:
-                        index_start.append(i)
-                        break
-                for i, item in enumerate(words_one):
-                    if item["end"] == c_end:
-                        index_end.append(i)
-                        break
-            else:
-                for i, item in enumerate(words_one):
-                    if item["start"] == c_start:
-                        index_start.append(i + c_len - 1)
-                        break
-                for i, item in enumerate(words_one):
-                    if item["end"] == c_end:
-                        index_end.append(i + c_len - 1)
-                        break
-
-        for jx in range(len(index_start)):
-            if index_start is not None:
-                label[index_start[jx]] = 1
-
-            if index_start is not None and index_end is not None:
-                for x in range(index_start[jx] + 1, index_end[jx] + 1):
-                    label[x] = 1
-
-        labels.append(label)
-
+        # target_text = [str(num) for num in texts_one[target_start:target_end + 1]]
+        # pos_list[target_start_index:target_end_index + 1] = list(target_text)
+        #
+        # pos_list = [str(pos) for pos in pos_list]
+        # result_list.append(pos_list)
+        word_text = texts_one[targets_one['start']:targets_one['end'] + 1]
+        # word_pos = targets_one['pos']
+        # word_str = f"{word_text}{word_pos}"
+        # new_text.append(word_str)
+        #
+        # str_my_list = ''.join(new_text)
+        # str_my_list = str_my_list.replace('"', '').replace(',', '').replace("'", "").replace(" ", "")
+        result_list.append(word_text)
     # 编码
     data = token.batch_encode_plus(
         # sentence_ids,
@@ -311,14 +296,9 @@ def collate_fn(data):
 
     lens = data['input_ids'].shape[1]
 
-    for i in range(len(labels)):
-        labels[i] = [2] + labels[i]
-        labels[i] += [2] * lens
-        labels[i] = labels[i][:lens]
-
     input_ids = data['input_ids'].to(device)
     attention_mask = data['attention_mask'].to(device)
-    labels = torch.LongTensor(labels).to(device)
+    labels = torch.LongTensor(frame_indexs).to(device)
 
     return input_ids, attention_mask, labels
 
@@ -331,9 +311,9 @@ train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
                                            drop_last=False)
 
 val_loader = torch.utils.data.DataLoader(dataset=val_dataset,
-                                         batch_size=256,
+                                         batch_size=128,
                                          collate_fn=collate_fn,
-                                         shuffle=True,
+                                         shuffle=False,
                                          drop_last=False)
 
 test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
@@ -344,15 +324,18 @@ test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
 
 
 def train_model(learning_rate, num_epochs):
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-3)  # 使用传入的学习率
+    writer = SummaryWriter()
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)  # 使用传入的学习率
     criterion = torch.nn.CrossEntropyLoss()
 
     lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.99)
 
-    best_val_f1 = 0  # 初始化最佳验证集 F1 分数
+    best_val_f1 = 0
+    best_accuracy = 0  # 初始化最佳验证集 F1 分数
     best_model_state = None  # 保存最佳模型参数
-    best_val_loss = 10
-    patience = 5
+
+    patience = 10
     counter = 0
 
     try:
@@ -361,67 +344,53 @@ def train_model(learning_rate, num_epochs):
             train_loss = 0
             train_f1 = 0
             train_acc = 0
-            train_precision = 0
             train_recall = 0
             train_count = 0
             for i, (input_ids, attention_mask, labels) in enumerate(train_loader):
                 # 遍历数据集，并将数据转移到GPU上
                 out = model(input_ids=input_ids, attention_mask=attention_mask)
                 # 进行前向传播，得到预测值out
-                out_z, labels_z = reshape_and_remove_pad(out, labels, attention_mask)
-
-                loss = criterion(out_z, labels_z)  # 计算损失
-
+                loss = criterion(out, labels)  # 计算损失
                 loss.backward()  # 反向传播，计算梯度
                 optimizer.step()  # 更新参数
                 optimizer.zero_grad()  # 梯度清零，防止梯度累积
 
-                out = torch.argmax(out, dim=2)
+                out = out.argmax(dim=1)
 
                 predicted_labels = []
                 true_labels = []
-                list5 = []
-                list6 = []
+
                 for j in range(len(labels)):
-                    predicted_label = out[j].tolist()
-
+                    predicted_label = out[j].tolist()  # 将位置索引转换为标签
+                    predicted_labels.append(predicted_label)
                     true_label = labels[j].tolist()
-                    t_first_index = true_label.index(2)
-                    t_second_index = true_label.index(2, t_first_index + 1)
-                    t_modified_label = true_label[t_first_index:t_second_index + 1]
-                    true_labels.append(t_modified_label)
-
-                    modified_label = predicted_label[t_first_index:t_second_index + 1]
-                    predicted_labels.append(modified_label)
-
-                y_true = [label for sublist in true_labels for label in sublist]
-                y_pred = [label for sublist in predicted_labels for label in sublist]
+                    true_labels.append(true_label)
 
                 # 计算准确率
-                # accuracy = accuracy_score(true_labels, predicted_labels)
+                accuracy = accuracy_score(true_labels, predicted_labels)
                 # 计算精确率
-                precision = precision_score(y_true, y_pred, average='macro')
+                # precision = precision_score(true_labels, predicted_labels, average='macro')
                 # 计算召回率
-                recall = recall_score(y_true, y_pred, average='macro')
+                recall = recall_score(true_labels, predicted_labels, average='macro')
                 # 计算F1分数
-                f1 = f1_score(y_true, y_pred, average='macro')
+                f1 = f1_score(true_labels, predicted_labels, average='macro')
 
                 train_loss += loss.item()
                 train_f1 += f1
-                train_precision += precision
+                train_acc += accuracy
                 train_recall += recall
                 train_count += 1
                 # print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
-                print(
-                    f"第{epoch + 1}周期：第{i + 1}轮训练, loss：{loss.item()}, 第{i + 1}轮训练集F1准确率为:{f1},第{i + 1}轮训练集precision:{precision},第{i + 1}轮训练集recall:{recall}")
+                # print(
+                #   f"第{epoch + 1}周期：第{i + 1}轮训练, loss：{loss.item()}, 第{i + 1}轮训练集F1准确率为:{f1},第{i + 1}轮训练集accuracy:{accuracy},第{i + 1}轮训练集recall:{recall}")
 
             train_loss /= train_count
             train_f1 /= train_count
-            train_precision /= train_count
+            train_acc /= train_count
             train_recall /= train_count
 
             print(
-                f"----------第{epoch + 1}周期,loss为{train_loss},总训练集F1为{train_f1},总precision为{train_precision}，总recall为{train_recall}------------")
+                f"----------第{epoch + 1}周期,loss为{train_loss},总训练集F1为{train_f1},总accuracy为{train_acc}，总recall为{train_recall}------------")
 
             # 验证
             model.eval()
@@ -430,63 +399,51 @@ def train_model(learning_rate, num_epochs):
             val_acc = 0
             val_recall = 0
             val_count = 0
-            val_precision = 0
+
             with torch.no_grad():
                 for i, (input_ids, attention_mask, labels) in enumerate(val_loader):
-                    # 遍历数据集，并将数据转移到GPU上
                     out = model(input_ids=input_ids, attention_mask=attention_mask)
-                    # 进行前向传播，得到预测值out
-                    out_z, labels_z = reshape_and_remove_pad(out, labels, attention_mask)
-
-                    loss = criterion(out_z, labels_z)  # 计算损失
-
-                    out = torch.argmax(out, dim=2)
-
+                    loss = criterion(out, labels)  # 计算损失
+                    out = out.argmax(dim=1)
                     predicted_labels = []
                     true_labels = []
-                    list5 = []
-                    list6 = []
+
                     for j in range(len(labels)):
-                        predicted_label = out[j].tolist()
-
+                        predicted_label = out[j].tolist()  # 将位置索引转换为标签
+                        predicted_labels.append(predicted_label)
                         true_label = labels[j].tolist()
-
                         true_labels.append(true_label)
 
-                        predicted_labels.append(predicted_label)
-
-                    y_true = [label for sublist in true_labels for label in sublist]
-                    y_pred = [label for sublist in predicted_labels for label in sublist]
-
                     # 计算准确率
-                    # accuracy = accuracy_score(true_labels, predicted_labels)
+                    accuracy = accuracy_score(true_labels, predicted_labels)
                     # 计算精确率
-                    precision = precision_score(y_true, y_pred, average='macro')
+                    # precision = precision_score(true_labels, predicted_labels, average='macro')
                     # 计算召回率
-                    recall = recall_score(y_true, y_pred, average='macro')
+                    recall = recall_score(true_labels, predicted_labels, average='macro')
                     # 计算F1分数
-                    f1 = f1_score(y_true, y_pred, average='macro')
+                    f1 = f1_score(true_labels, predicted_labels, average='macro')
 
                     val_loss += loss.item()
                     val_f1 += f1
-                    val_precision += precision
+                    val_acc += accuracy
                     val_recall += recall
                     val_count += 1
+
                     # print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
-                    print(
-                        f"第{epoch + 1}周期：第{i + 1}轮验证, loss：{loss.item()}, 第{i + 1}轮验证集F1准确率为:{f1},第{i + 1}轮验证集precision:{precision},第{i + 1}轮训练集recall:{recall}")
+                    # print(
+                    #    f"第{epoch + 1}周期：第{i + 1}轮验证, loss：{loss.item()}, 第{i + 1}轮验证集F1准确率为:{f1},第{i + 1}轮验证集accuracy:{accuracy},第{i + 1}轮验证集recall:{recall}")
 
                 val_loss /= val_count
                 val_f1 /= val_count
-                val_precision /= val_count
+                val_acc /= val_count
                 val_recall /= val_count
 
                 print(
-                    f"----------第{epoch + 1}周期,loss为{val_loss},总验证集F1为{val_f1},总precision为{val_precision}，总recall为{val_recall}------------")
+                    f"------------第{epoch + 1}周期,loss为{val_loss}，总验证集F1为{val_f1},总accuracy为{val_acc}，总recall为{val_recall}------------")
 
-            if val_f1 > best_val_f1:
-                best_val_f1 = val_f1
-                best_model_state = copy.deepcopy(model.state_dict())
+            if val_acc > best_accuracy:
+                best_accuracy = val_acc
+                best_model_state = model.state_dict()
                 counter = 0
             else:
                 counter += 1
@@ -494,31 +451,33 @@ def train_model(learning_rate, num_epochs):
             if counter >= patience:
                 print("Early stopping!")
                 # 保存当前模型
-                torch.save(best_model_state, "task2_model_early_7.pt")
+                torch.save(best_model_state, "task1_26_model_early_1.pt")
                 break
             lr_scheduler.step()
             print(f"学习率为{lr_scheduler.get_last_lr()}")
+        # 加载具有最佳验证集性能的模型参数
+        model.load_state_dict(best_model_state)
 
-        print(f"验证集 F1 分数：{val_f1}")
-        return best_val_f1, best_model_state
+        print(f"验证集 F1 分数：{best_val_f1}")
+        return best_accuracy, best_model_state
 
     except KeyboardInterrupt:
         # 捕捉用户手动终止训练的异常
         print('手动终止训练')
-        model_save_path = "c_model_interrupted_2.pth"
+        model_save_path = "c_model_interrupted_1.pt"
         torch.save(model.state_dict(), model_save_path)
         print(f"当前模型已保存到：{model_save_path}")
 
 
 # 定义一个超参数空间，用于搜佳超参数
 learning_rate = 0.001
-num_epochs = 100
+num_epochs = 30
 
 # 使用指定的超参数训练模型
 test_f1, model = train_model(learning_rate, num_epochs)
 
 # 保存训练好的模型
-model_save_path = "task2_best_model_19.pth"
+model_save_path = "task1_26_best_model_1.pt"
 torch.save(model, model_save_path)
 print(f"使用指定的超参数训练的模型已保存到：{model_save_path}")
 print(test_f1)

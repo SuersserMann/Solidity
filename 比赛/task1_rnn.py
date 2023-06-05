@@ -89,10 +89,10 @@ class Model(torch.nn.Module):
             param.requires_grad_(False)
         self.gru = torch.nn.GRU(768, 768, num_layers=2, batch_first=True)
         self.fc = torch.nn.Sequential(
-            torch.nn.Linear(768, 512),
-            torch.nn.ReLU(),
-            torch.nn.Dropout(p=0.5),
-            torch.nn.Linear(512, 695)
+            # torch.nn.Linear(768, 512),
+            # torch.nn.ReLU(),
+            # torch.nn.Dropout(p=0.5),
+            torch.nn.Linear(768, 695)
         )
 
     def forward(self, input_ids, attention_mask):
@@ -181,13 +181,13 @@ def collate_fn(data):
         new_text = []
 
         word_text = texts_one[targets_one['start']:targets_one['end'] + 1]
-        word_pos = targets_one['pos']
-        word_str = f"{word_text}{word_pos}"
-        new_text.append(word_str)
-
-        str_my_list = ''.join(new_text)
-        str_my_list = str_my_list.replace('"', '').replace(',', '').replace("'", "").replace(" ", "")
-        result.append(str_my_list)
+        # word_pos = targets_one['pos']
+        # word_str = f"{word_text}{word_pos}"
+        # new_text.append(word_str)
+        #
+        # str_my_list = ''.join(new_text)
+        # str_my_list = str_my_list.replace('"', '').replace(',', '').replace("'", "").replace(" ", "")
+        result.append(word_text)
 
     # 编码
     data = token.batch_encode_plus(
@@ -384,7 +384,7 @@ def train_model(learning_rate, num_epochs):
         # 捕捉用户手动终止训练的异常
         print('手动终止训练')
         model_save_path = "c_model_interrupted_1.pt"
-        torch.save(model.state_dict(), model_save_path)
+        torch.save(best_model_state, model_save_path)
         print(f"当前模型已保存到：{model_save_path}")
 
 
@@ -396,7 +396,7 @@ num_epochs = 200
 test_f1, model = train_model(learning_rate, num_epochs)
 
 # 保存训练好的模型
-model_save_path = "task1_best_model_2.pt"
+model_save_path = "task1_best_model_3.pt"
 torch.save(model, model_save_path)
 print(f"使用指定的超参数训练的模型已保存到：{model_save_path}")
 print(test_f1)

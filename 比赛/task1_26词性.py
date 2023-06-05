@@ -2,7 +2,7 @@ import re
 import numpy as np
 import torch
 from torch import nn
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoModel, AutoTokenizer, AutoModelForMaskedLM
 from pyevmasm import disassemble_hex
 import sys
 import os
@@ -83,7 +83,8 @@ print('device=', device)
 class Model(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.pretrained = AutoModel.from_pretrained("bert-base-chinese")
+        # self.pretrained = AutoModel.from_pretrained("bert-base-chinese")
+        self.pretrained = AutoModelForMaskedLM.from_pretrained("bert-large-uncased")
         self.pretrained.to(device)
         for param in self.pretrained.parameters():
             param.requires_grad_(False)
@@ -143,8 +144,8 @@ val_dataset = Dataset('cfn-dev.json')
 test_dataset = Dataset('cfn-test-A.json')
 
 # 加载字典和分词工具
-token = AutoTokenizer.from_pretrained("bert-base-chinese")
-
+# token = AutoTokenizer.from_pretrained("bert-base-chinese")
+token = AutoTokenizer.from_pretrained("bert-large-uncased")
 
 def find_indices(cfn_spans_start, word_start):
     matches = []
@@ -152,6 +153,7 @@ def find_indices(cfn_spans_start, word_start):
         if num in cfn_spans_start:
             matches.append(i)
     return matches
+
 
 def get_value_by_pos(pos):
     mapping = {
@@ -212,6 +214,7 @@ def get_value_by_pos(pos):
     }
     return mapping.get(pos)
 
+
 def collate_fn(data):
     sentence_ids = []
     cfn_spanss = []
@@ -245,10 +248,12 @@ def collate_fn(data):
         target_end = targets_one['end']
 
         list1 = []
+
         for z in range(len(words_one)):
             if words_one[z]['start'] == target_start:
                 for g in range(target_start, target_end + 1):
                     list1.append(texts_one[g])
+                list1.append(words_one[z]['pos'])
             else:
                 list1.append(words_one[z]['pos'])
 
@@ -261,13 +266,25 @@ def collate_fn(data):
         for i, item in enumerate(words_one):
             if item["end"] == target_end:
                 c_e = i
-        a=0
+        a = 0
 
         for zg in range(c_t, c_e + 1 + (target_end - target_start)):
             string_list[zg] = texts_one[target_start + a]
             a += 1
+        so = 0
+        se = 0
+        for o, item in enumerate(words_one):
+            if item['start'] == target_start:
+                so = o
+            if item['end'] == target_end:
+                se = o + target_end - target_start
+        if words_one[0]['start'] == target_start:
+            string_list = string_list[so:so + (target_end - target_start + 1)]
+        if words_one[-1]['end'] == target_end:
+            string_list = string_list[se-(target_end - target_start)-1:se+1]
+        else:
+            string_list = string_list[se - (target_end - target_start) - 1:se + 2]
         result_list.append(string_list)
-
         # for g in range(target_start, target_end + 1):
         #     string_list[g] = texts_one[g]
 
@@ -297,30 +314,30 @@ def collate_fn(data):
         #     for x in range(target_start[0] + 1, target_end[0] + 1):
         #         label[x] = 4
 
-        index_start = []
-        index_end = []
-        for jz in range(len(cfn_spans_start)):
-            c_start = cfn_spans_start[jz]
-            c_end = cfn_spans_end[jz]
-            c_len = target_end - target_start + 1
-            if c_start < target_start:
-                for i, item in enumerate(words_one):
-                    if item["start"] == c_start:
-                        index_start.append(i)
-                        break
-                for i, item in enumerate(words_one):
-                    if item["end"] == c_end:
-                        index_end.append(i)
-                        break
-            else:
-                for i, item in enumerate(words_one):
-                    if item["start"] == c_start:
-                        index_start.append(i + c_len - 1)
-                        break
-                for i, item in enumerate(words_one):
-                    if item["end"] == c_end:
-                        index_end.append(i + c_len - 1)
-                        break
+        # index_start = []
+        # index_end = []
+        # for jz in range(len(cfn_spans_start)):
+        #     c_start = cfn_spans_start[jz]
+        #     c_end = cfn_spans_end[jz]
+        #     c_len = target_end - target_start + 1
+        #     if c_start < target_start:
+        #         for i, item in enumerate(words_one):
+        #             if item["start"] == c_start:
+        #                 index_start.append(i)
+        #                 break
+        #         for i, item in enumerate(words_one):
+        #             if item["end"] == c_end:
+        #                 index_end.append(i)
+        #                 break
+        #     else:
+        #         for i, item in enumerate(words_one):
+        #             if item["start"] == c_start:
+        #                 index_start.append(i + c_len - 1)
+        #                 break
+        #         for i, item in enumerate(words_one):
+        #             if item["end"] == c_end:
+        #                 index_end.append(i + c_len - 1)
+        #                 break
 
         # for jx in range(len(index_start)):
         #     if index_start is not None:
@@ -359,7 +376,6 @@ def collate_fn(data):
     return input_ids, attention_mask, labels
 
 
-
 # batchsize不能太大，明白了，数据太少了，刚才的数据被drop_last丢掉了
 train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
                                            batch_size=32,
@@ -389,7 +405,7 @@ def train_model(learning_rate, num_epochs):
     lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.99)
 
     best_val_f1 = 0
-    best_accuracy = 0 # 初始化最佳验证集 F1 分数
+    best_accuracy = 0  # 初始化最佳验证集 F1 分数
     best_model_state = None  # 保存最佳模型参数
 
     patience = 10
@@ -497,7 +513,6 @@ def train_model(learning_rate, num_epochs):
 
                 print(
                     f"------------第{epoch + 1}周期,loss为{val_loss}，总验证集F1为{val_f1},总accuracy为{val_acc}，总recall为{val_recall}------------")
-
 
             if val_acc > best_accuracy:
                 best_accuracy = val_acc

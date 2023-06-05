@@ -55,7 +55,7 @@ class Model(torch.nn.Module):
         for param in self.pretrained.parameters():
             param.requires_grad_(False)
         self.lstm = nn.LSTM(768, 384, num_layers=2, batch_first=True, bidirectional=True)
-        self.rfc = nn.Linear(768, 4)
+        self.rfc = nn.Linear(768, 3)
 
     def forward(self, input_ids, attention_mask):
         out = self.pretrained(input_ids=input_ids, attention_mask=attention_mask)
@@ -126,21 +126,64 @@ def reshape_and_remove_pad(outs, labels, attention_mask):
     return outs, labels
 
 
-# 获取正确数量和总数
-def get_correct_and_total_count(labels, outs):
-    # [b*lens, 8] -> [b*lens]
-    outs = outs.argmax(dim=1)
-    correct = (outs == labels).sum().item()
-    total = len(labels)
-
-    # 计算除了0以外元素的正确率,因为0太多了,包括的话,正确率很容易虚高
-    select = labels != 0
-    outs = outs[select]
-    labels = labels[select]
-    correct_content = (outs == labels).sum().item()
-    total_content = len(labels)
-
-    return correct, total, correct_content, total_content
+def get_value_by_pos(pos):
+    mapping = {
+        '': 100,
+        'e': 101,
+        'r': 102,
+        'i': 103,
+        'd': 104,
+        'u': 105,
+        'nh': 106,
+        'ws': 107,
+        'v': 108,
+        'ni': 109,
+        'm': 110,
+        'k': 111,
+        'b': 112,
+        'c': 113,
+        'nd': 114,
+        'n': 115,
+        'a': 116,
+        'wp': 117,
+        'o': 118,
+        'nt': 119,
+        'h': 120,
+        'nl': 121,
+        'p': 122,
+        'q': 123,
+        'j': 124,
+        'nz': 125,
+        'ns': 126,
+        '无': 127,
+        'e无': 128,
+        'r无': 129,
+        'i无': 130,
+        'd无': 131,
+        'u无': 132,
+        'nh无': 133,
+        'ws无': 132,
+        'v无': 135,
+        'ni无': 136,
+        'm无': 137,
+        'k无': 138,
+        'b无': 139,
+        'c无': 140,
+        'nd无': 141,
+        'n无': 142,
+        'a无': 143,
+        'wp无': 144,
+        'o无': 145,
+        'nt无': 146,
+        'h无': 147,
+        'nl无': 148,
+        'p无': 149,
+        'q无': 150,
+        'j无': 151,
+        'nz无': 152,
+        'ns无': 153
+    }
+    return mapping.get(pos)
 
 
 def collate_fn(data):
@@ -154,6 +197,7 @@ def collate_fn(data):
     result = []
     characters_list = []
     labels = []
+    result_list=[]
     for i in data:
         sentence_ids.append(i[0])
         cfn_spanss_one = i[1]
@@ -169,14 +213,36 @@ def collate_fn(data):
         words.append(words_one)
         frame_indexs.append(i[6])
 
+        list1 = []
+        for z in range(len(words_one)):
+            if words_one[z]['end'] - words_one[z]['start'] == 0:
+                list1.append(words_one[z]['pos'])
+            else:
+                for j in range(words_one[z]['end'] - words_one[z]['start'] + 1):
+                    if j == 0:
+                        list1.append(words_one[z]['pos'])
+                    else:
+                        list1.append(f"{words_one[z]['pos']}无")
+
+        # print(list1)
+        list2 = [get_value_by_pos(pos) for pos in list1]
+        string_list = [str(num) for num in list2]
+
+        target_start = targets_one['start']
+        target_end = targets_one['end']
+        for u in range(target_end - target_start + 1):
+            for g in range(target_start, target_end + 1):
+                string_list[g] = texts_one[g]
+                # string_list[g] = "154"
+
+        result_list.append(string_list)
         new_text = []
 
         characters = [char for char in texts_one]
+
         characters_list.append(characters)
         len_text = len(texts_one)
 
-        target_start = [targets_one['start']]
-        target_end = [targets_one['end']]
         cfn_spans_start = [elem['start'] for elem in cfn_spanss_one]
         cfn_spans_end = [elem['end'] for elem in cfn_spanss_one]
         # cfn_spans_combined = [[start, end] for start, end in zip(target_start, target_end)]
@@ -188,7 +254,7 @@ def collate_fn(data):
         #     label[target_start[0]] = 3
         #
         # if target_start is not None and target_end is not None:
-        #     for x in range(target_start[0] + 1, target_end[0]+1):
+        #     for x in range(target_start[0] + 1, target_end[0] + 1):
         #         label[x] = 4
         for jx in range(len(cfn_spans_start)):
             if cfn_spans_start is not None:
@@ -196,7 +262,7 @@ def collate_fn(data):
 
             if cfn_spans_start is not None and cfn_spans_end is not None:
                 for x in range(cfn_spans_start[jx] + 1, cfn_spans_end[jx] + 1):
-                    label[x] = 2
+                    label[x] = 1
 
         labels.append(label)
 
@@ -209,7 +275,7 @@ def collate_fn(data):
         # texts,
         # words,
         # result,
-        characters_list,
+        result_list,
 
         padding=True,
         truncation=True,
@@ -221,8 +287,8 @@ def collate_fn(data):
     lens = data['input_ids'].shape[1]
 
     for i in range(len(labels)):
-        labels[i] = [3] + labels[i]
-        labels[i] += [3] * lens
+        labels[i] = [2] + labels[i]
+        labels[i] += [2] * lens
         labels[i] = labels[i][:lens]
 
     input_ids = data['input_ids'].to(device)
@@ -234,24 +300,23 @@ def collate_fn(data):
 
 # batchsize不能太大，明白了，数据太少了，刚才的数据被drop_last丢掉了
 train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
-                                           batch_size=256,
+                                           batch_size=64,
                                            collate_fn=collate_fn,
                                            shuffle=True,
                                            drop_last=False)
 
 val_loader = torch.utils.data.DataLoader(dataset=val_dataset,
-                                         batch_size=256,
+                                         batch_size=64,
                                          collate_fn=collate_fn,
                                          shuffle=True,
                                          drop_last=False)
 
-test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
-                                          batch_size=640,
+test_loader = torch.utils.data.DataLoader(dataset=val_dataset,
+                                          batch_size=64,
                                           collate_fn=collate_fn,
                                           shuffle=False,
                                           drop_last=False)
-
-model.load_state_dict(torch.load('task2_best_model_8.pth'))
+model.load_state_dict(torch.load('task2_best_model_17.pth'))
 
 model.eval()
 val_loss = 0
@@ -274,18 +339,20 @@ with torch.no_grad():
 
         predicted_labels = []
         true_labels = []
-
+        list5 = []
+        list6 = []
         for j in range(len(labels)):
             predicted_label = out[j].tolist()
-
             true_label = labels[j].tolist()
-            t_first_index = true_label.index(3)
-            t_second_index = true_label.index(3, t_first_index + 1)
+            t_first_index = true_label.index(2)
+            t_second_index = true_label.index(2, t_first_index + 1)
             t_modified_label = true_label[t_first_index:t_second_index + 1]
             true_labels.append(t_modified_label)
 
             modified_label = predicted_label[t_first_index:t_second_index + 1]
             predicted_labels.append(modified_label)
+
+
 
         y_true = [label for sublist in true_labels for label in sublist]
         y_pred = [label for sublist in predicted_labels for label in sublist]
@@ -304,7 +371,7 @@ with torch.no_grad():
         val_precision += precision
         val_recall += recall
         val_count += 1
-        #print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
+        # print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
         print(
             f"第{i + 1}轮验证, loss：{loss.item()}, 第{i + 1}轮验证集F1准确率为:{f1},第{i + 1}轮验证集precision:{precision},第{i + 1}轮训练集recall:{recall}")
 

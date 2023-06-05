@@ -17,6 +17,7 @@ import torch.nn.functional as F
 
 warnings.filterwarnings("ignore")
 
+
 print(torch.__version__)
 # 使用cuda
 device_ids = [0, 1]
@@ -30,23 +31,19 @@ print('device=', device)
 class Model(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.pretrained = AutoModel.from_pretrained("bert-base-chinese")
+        self.pretrained = AutoModel.from_pretrained("xlm-roberta-large")
         self.pretrained.to(device)
         for param in self.pretrained.parameters():
             param.requires_grad_(False)
-        self.gru = torch.nn.GRU(768, 768, num_layers=2, batch_first=True)
-        self.fc = torch.nn.Sequential(
-            # torch.nn.Linear(1024, 1024),
-            # torch.nn.ReLU(),
-            # torch.nn.Dropout(p=0.2),
-            torch.nn.Linear(768, 990)
-        )
+        self.lstm = nn.LSTM(1024, 512, num_layers=2, batch_first=True, bidirectional=True)
+        self.rfc = nn.Linear(1024, 4)
 
     def forward(self, input_ids, attention_mask):
         out = self.pretrained(input_ids=input_ids, attention_mask=attention_mask)
-        out = out.last_hidden_state[:, 0]  # Only keep the last hidden state
-        out, _ = self.gru(out.unsqueeze(0))
-        out = self.fc(out.squeeze(0))
+        out = out.last_hidden_state  # Keep the last hidden state for all positions
+        out, _ = self.lstm(out)
+        out = self.rfc(out)
+        # out = F.softmax(out, dim=-1)
         return out
 
 
@@ -65,7 +62,7 @@ for z, frame_idx in enumerate(frame_info):
 
 class Dataset(data.Dataset):
     def __init__(self, filename):
-        with open(filename, 'r', encoding='utf-8', errors="replace") as f:
+        with open(filename, 'r', encoding='utf-8') as f:
             self.data = json.load(f)
 
     def __len__(self):
@@ -80,49 +77,18 @@ class Dataset(data.Dataset):
         target = item['target']
         text = item['text']
         word = item['word']
-        # frame_index = frame2idx[frame]
+        frame_index = frame2idx[frame]
 
-        return sentence_id, cfn_spans, frame, target, text, word
-
-
-class Dataset1(data.Dataset):
-    def __init__(self, filename):
-        with open(filename, 'r', encoding='utf-8', errors="replace") as f:
-            self.data = json.load(f)
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, index):
-        item = self.data[index]
-
-        frame_name = item['frame_name']
-        frame_ename = item['frame_ename']
-        frame_def = item['frame_def']
-        fes = item['fes']
-
-        return frame_name, frame_ename, frame_def, fes
+        return sentence_id, cfn_spans, frame, target, text, word, frame_index
 
 
 train_dataset = Dataset('cfn-train.json')
 val_dataset = Dataset('cfn-dev.json')
-test_dataset = Dataset('new_cfn-test-B.json')
-frame_info = Dataset1('frame_info.json')
+test_dataset = Dataset('cfn-test-A.json')
 
 # 加载字典和分词工具
-# token = AutoTokenizer.from_pretrained("bert-base-chinese")
-tokenizer = AutoTokenizer.from_pretrained("bert-base-chinese")
-
-bb = []
-for t in range(len(frame_info)):
-    for y in range(len(frame_info[t][3])):
-        bb.append(frame_info[t][3][y]['fe_name'])
-bb = list(set(bb))
-
-
-def fe_name2idx(target_data):
-    indices = [index for index, data in enumerate(bb) if data == target_data][0]
-    return indices
+# token = AutoTokenizer.from_pretrained("bert-large-uncased")
+tokenizer = AutoTokenizer.from_pretrained("xlm-roberta-large")
 
 
 def find_indices(cfn_spans_start, word_start):
@@ -131,17 +97,6 @@ def find_indices(cfn_spans_start, word_start):
         if num in cfn_spans_start:
             matches.append(i)
     return matches
-
-
-def find_feature_index(frame_name, fe_name):
-    for frame in frame_info:
-        if frame[0] == frame_name:
-            for index, fe in enumerate(frame[3]):
-                if fe['fe_name'] == fe_name:
-                    return index
-            break
-
-    return None
 
 
 def reshape_and_remove_pad(outs, labels, attention_mask):
@@ -224,12 +179,11 @@ def collate_fn(data):
     result = []
     characters_list = []
     labels = []
-    result_list = []
+    result_list=[]
     for i in data:
         sentence_ids.append(i[0])
         cfn_spanss_one = i[1]
         cfn_spanss.append(cfn_spanss_one)
-        frame_one = i[2]
         frames.append(i[2])
 
         targets_one = i[3]
@@ -239,7 +193,7 @@ def collate_fn(data):
         texts.append(texts_one)
         words_one = i[5]
         words.append(words_one)
-        # frame_indexs.append(i[6])
+        frame_indexs.append(i[6])
 
         list1 = []
         for z in range(len(words_one)):
@@ -254,45 +208,49 @@ def collate_fn(data):
 
         # print(list1)
         list2 = [get_value_by_pos(pos) for pos in list1]
-        # string_list = [str(num) for num in list2]
-        #
-        # target_start = targets_one['start']
-        # target_end = targets_one['end']
-        # for u in range(target_end - target_start + 1):
-        #     for g in range(target_start, target_end + 1):
-        #         string_list[g] = texts_one[g]
-        #         # string_list[g] = "154"
-        #
+        string_list = [str(num) for num in list2]
 
-        # cfn_spans_start = [elem['start'] for elem in cfn_spanss_one]
-        # cfn_spans_end = [elem['end'] for elem in cfn_spanss_one]
-        xl_text = []
-        char_list = list(frame_one)
-        for yy, item in enumerate(cfn_spanss_one):
-            if targets_one['start'] < item['start']:
-                xl_text = [0] * (item['start'] - targets_one['end'] - 1) + list2[item['start']:item['end'] + 1]
-                string_list = [str(num) for num in xl_text]
-                string_list = char_list + string_list
-                result_list.append(string_list)
-            else:
-                xl_text = list2[item['start']:item['end'] + 1] + [0] * (targets_one['start'] - item['end'] - 1)
-                string_list = [str(num) for num in xl_text]
-                string_list = string_list + char_list
-                result_list.append(string_list)
-            # characters = [char for char in xl_text]
-            # xl_label = fe_name2idx(item['fe_name'])
-            # labels.append(xl_label)
-            # characters_list.append(characters)
-        # len_text = len(texts_one)
+        target_start = targets_one['start']
+        target_end = targets_one['end']
+        for u in range(target_end - target_start + 1):
+            for g in range(target_start, target_end + 1):
+                string_list[g] = texts_one[g]
+                # string_list[g] = "154"
+        for u in range(len(words_one)):
+            if words_one[u]['pos'] == 'wp':
+                for x in range(words_one[u]['start'], words_one[u]['end'] + 1):
+                    string_list[x] = texts_one[x]
 
+        result_list.append(string_list)
+        new_text = []
+
+        characters = [char for char in texts_one]
+
+        characters_list.append(characters)
+        len_text = len(texts_one)
+
+        cfn_spans_start = [elem['start'] for elem in cfn_spanss_one]
+        cfn_spans_end = [elem['end'] for elem in cfn_spanss_one]
         # cfn_spans_combined = [[start, end] for start, end in zip(target_start, target_end)]
         # target_combined = [target_start[0], target_end[0]]
 
-        # label = [0] * len_text
-        # for i, item in enumerate(cfn_spanss_one):
-        #     for gt in range(item['end'] - item['start'] + 1):
-        #         label[item['start'] + gt] = fe_name2idx(item['fe_name'])
-        # string_list = [str(num) for num in xl_text]
+        label = [0] * len_text
+
+        # if target_start is not None:
+        #     label[target_start[0]] = 3
+        #
+        # if target_start is not None and target_end is not None:
+        #     for x in range(target_start[0] + 1, target_end[0] + 1):
+        #         label[x] = 4
+        for jx in range(len(cfn_spans_start)):
+            if cfn_spans_start is not None:
+                label[cfn_spans_start[jx]] = 1
+
+            if cfn_spans_start is not None and cfn_spans_end is not None:
+                for x in range(cfn_spans_start[jx] + 1, cfn_spans_end[jx] + 1):
+                    label[x] = 2
+
+        labels.append(label)
 
     # 编码
     data = tokenizer.batch_encode_plus(
@@ -303,7 +261,6 @@ def collate_fn(data):
         # texts,
         # words,
         # result,
-        # characters_list,
         result_list,
 
         padding=True,
@@ -313,18 +270,18 @@ def collate_fn(data):
         is_split_into_words=True,
         return_length=True)
 
-    # lens = data['input_ids'].shape[1]
+    lens = data['input_ids'].shape[1]
 
-    # for i in range(len(labels)):
-    #     labels[i] = [991] + labels[i]
-    #     labels[i] += [991] * lens
-    #     labels[i] = labels[i][:lens]
+    for i in range(len(labels)):
+        labels[i] = [3] + labels[i]
+        labels[i] += [3] * lens
+        labels[i] = labels[i][:lens]
 
     input_ids = data['input_ids'].to(device)
     attention_mask = data['attention_mask'].to(device)
-    # labels = torch.LongTensor(labels).to(device)
+    labels = torch.LongTensor(labels).to(device)
 
-    return input_ids, attention_mask, sentence_ids, cfn_spanss
+    return input_ids, attention_mask, labels
 
 
 # batchsize不能太大，明白了，数据太少了，刚才的数据被drop_last丢掉了
@@ -335,18 +292,17 @@ train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
                                            drop_last=False)
 
 val_loader = torch.utils.data.DataLoader(dataset=val_dataset,
-                                         batch_size=16,
+                                         batch_size=256,
                                          collate_fn=collate_fn,
-                                         shuffle=False,
+                                         shuffle=True,
                                          drop_last=False)
 
-test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
-                                          batch_size=64,
+test_loader = torch.utils.data.DataLoader(dataset=val_dataset,
+                                          batch_size=640,
                                           collate_fn=collate_fn,
                                           shuffle=False,
                                           drop_last=False)
-
-model.load_state_dict(torch.load('task3_best_model_3.pth'))
+model.load_state_dict(torch.load('task2_best_model_13.pth'))
 
 model.eval()
 val_loss = 0
@@ -357,30 +313,56 @@ val_count = 0
 val_precision = 0
 criterion = torch.nn.CrossEntropyLoss()
 with torch.no_grad():
-    bb_list = []
-    for i, (input_ids, attention_mask, sentence_ids, cfn_spanss) in enumerate(test_loader):
+    for i, (input_ids, attention_mask, labels) in enumerate(val_loader):
         # 遍历数据集，并将数据转移到GPU上
         out = model(input_ids=input_ids, attention_mask=attention_mask)
         # 进行前向传播，得到预测值out
-        out = out.argmax(dim=1)
+        out_z, labels_z = reshape_and_remove_pad(out, labels, attention_mask)
+
+        loss = criterion(out_z, labels_z)  # 计算损失
+
+        out = torch.argmax(out, dim=2)
 
         predicted_labels = []
-
-        for j in range(len(out)):
+        true_labels = []
+        list5 = []
+        list6 = []
+        for j in range(len(labels)):
             predicted_label = out[j].tolist()
-            predicted_labels.append(predicted_label)
+            true_label = labels[j].tolist()
+            t_first_index = true_label.index(3)
+            t_second_index = true_label.index(3, t_first_index + 1)
+            t_modified_label = true_label[t_first_index:t_second_index + 1]
+            true_labels.append(t_modified_label)
 
-        uuu = 0
-        ooo = 0
-        for z in range(len(cfn_spanss)):
-            for t in range(len(cfn_spanss[z])):
-                sentence_id = sentence_ids[uuu]
-                p_fe_name = bb[predicted_labels[ooo]]
-                new_list = [sentence_id] + [cfn_spanss[z][t]['start']] + [cfn_spanss[z][t]['end']] + [p_fe_name]
-                print(new_list)
-                bb_list.append(new_list)
-                ooo += 1
-            uuu += 1
-        json_data = json.dumps(bb_list)
-        with open('B_task3_test.json', 'w', encoding='UTF-8') as f:
-            f.write(json_data)
+            modified_label = predicted_label[t_first_index:t_second_index + 1]
+            predicted_labels.append(modified_label)
+
+        y_true = [label for sublist in true_labels for label in sublist]
+        y_pred = [label for sublist in predicted_labels for label in sublist]
+
+        # 计算准确率
+        # accuracy = accuracy_score(true_labels, predicted_labels)
+        # 计算精确率
+        precision = precision_score(y_true, y_pred, average='macro')
+        # 计算召回率
+        recall = recall_score(y_true, y_pred, average='macro')
+        # 计算F1分数
+        f1 = f1_score(y_true, y_pred, average='macro')
+
+        val_loss += loss.item()
+        val_f1 += f1
+        val_precision += precision
+        val_recall += recall
+        val_count += 1
+        # print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
+        print(
+            f"第{i + 1}轮验证, loss：{loss.item()}, 第{i + 1}轮验证集F1准确率为:{f1},第{i + 1}轮验证集precision:{precision},第{i + 1}轮训练集recall:{recall}")
+
+    val_loss /= val_count
+    val_f1 /= val_count
+    val_precision /= val_count
+    val_recall /= val_count
+
+    print(
+        f"----------loss为{val_loss},总验证集F1为{val_f1},总precision为{val_precision}，总recall为{val_recall}------------")
