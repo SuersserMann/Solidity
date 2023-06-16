@@ -39,4 +39,4 @@ def remove_subset_entities(input_file, output_file):
 
 
 # 调用函数执行任务
-remove_subset_entities('result.txt', 'new_result.txt')
+remove_subset_entities('merged_file.txt', 'new_result.txt')

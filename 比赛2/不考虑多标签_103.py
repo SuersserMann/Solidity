@@ -350,7 +350,7 @@ def train_model(learning_rate, num_epochs):
                     out_z, labels_z = reshape_and_remove_pad(out, labels, attention_mask)
 
                     loss = -model.module.crf(out, labels, attention_mask.to(torch.bool))
-                    loss = loss.sum() / train_loader.batch_size
+                    loss = loss.sum() / val_loader.batch_size
 
                     out = model.module.crf.viterbi_decode(out, attention_mask.to(torch.bool))
                     # out = torch.argmax(out, dim=2)

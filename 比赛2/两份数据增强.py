@@ -6,7 +6,6 @@ from TorchCRF import CRF
 from sklearn.preprocessing import MultiLabelBinarizer
 from torch import nn
 from transformers import AutoModel, AutoTokenizer
-import torch.utils.data as Data
 import json
 import torch.utils.data as data
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
@@ -14,6 +13,7 @@ import warnings
 import torch.nn.functional as F
 import jsonlines
 import regex
+import random
 
 warnings.filterwarnings("ignore")
 
@@ -32,9 +32,9 @@ class Model(torch.nn.Module):
         for param in self.pretrained.parameters():
             param.requires_grad_(False)
         self.lstm = nn.LSTM(768, 384, num_layers=2, batch_first=True, bidirectional=True)
-        self.cc = nn.Linear(768, 614)
+        self.cc = nn.Linear(768, 208)
         # self.dropout = nn.Dropout(0.5)  # 添加dropout层
-        self.crf = CRF(614)  # 添加CRF层
+        self.crf = CRF(208)  # 添加CRF层
 
     def forward(self, input_ids, attention_mask):
         out = self.pretrained(input_ids=input_ids, attention_mask=attention_mask)
@@ -65,16 +65,42 @@ class Dataset(data.Dataset):
         text = item['text']
         events = item['events']
 
-        #过滤掉events为空的数据
+        # 过滤掉events为空的数据
         if events == []:
             return None
 
         return text_id, text, events
 
 
+class Dataset1(data.Dataset):
+    def __init__(self, filename):
+        with jsonlines.open(filename, 'r') as f:
+            self.data = list(f)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index):
+        item = self.data[index]
+
+        text_id = item['text_id']
+        text = item['text']
+        events = item['events']
+
+        return text_id, text, events
+
+
+b_train_dataset = Dataset1('random_train.jsonl')
+b_val_dataset = Dataset1('random_val.jsonl')
 train_dataset = Dataset('train.jsonl')
 val_dataset = Dataset('dev.jsonl')
-test_dataset = Dataset('testA.jsonl')
+da_train = Dataset('da_train.jsonl')
+da2_train = Dataset('da_train_2.jsonl')
+# test_dataset = Dataset('testA.jsonl')
+b_train_dataset = [item for item in b_train_dataset]
+b_val_dataset = [item for item in b_val_dataset]
+da_train=[item for item in da_train]
+da2_train=[item for item in da2_train]
 train_dataset = [item for item in train_dataset if item is not None]
 val_dataset = [item for item in val_dataset if item is not None]
 
@@ -94,7 +120,7 @@ for text_id, text, events in train_dataset:
     has_different_event_types = False
     for entity, event_types in entity_dict.items():
         num_event_types = len(event_types)
-        if num_event_types > 2:
+        if num_event_types > 1:
             has_different_event_types = True
             if num_event_types in entity_counts:
                 entity_counts[num_event_types] += 1
@@ -121,7 +147,7 @@ for text_id, text, events in val_dataset:
     has_different_event_types = False
     for entity, event_types in entity_dict.items():
         num_event_types = len(event_types)
-        if num_event_types > 2:
+        if num_event_types > 1:
             has_different_event_types = True
             if num_event_types in entity_counts_val:
                 entity_counts_val[num_event_types] += 1
@@ -161,6 +187,20 @@ quchong_train_dataset = filter_dataset(train_dataset)
 quchong_val_dataset = filter_dataset(val_dataset)
 train_dataset = [x for x in train_dataset if x not in quchong_train_dataset]
 val_dataset = [x for x in val_dataset if x not in quchong_val_dataset]
+
+# def filter_empty_events(dd):
+#     add_0_dataset = [item for item in dd if item[2] == []]
+#     return add_0_dataset
+#
+#
+# train_0_dataset = filter_empty_events(b_train_dataset)
+# val_0_dataset = filter_empty_events(b_val_dataset)
+# random_train = random.sample(train_0_dataset, 10000)
+# random_val = random.sample(val_0_dataset, 1000)
+train_dataset.extend(b_train_dataset)
+train_dataset.extend(da_train)
+train_dataset.extend(da2_train)
+val_dataset.extend(b_val_dataset)
 
 token = AutoTokenizer.from_pretrained("bert-base-chinese")
 
@@ -238,30 +278,21 @@ def collate_fn(data):
             text_one = text_one[:510]
         len_text = len(text_one)
 
-        label = [612] * len_text
+        label = [206] * len_text
 
         characters_list.append(characters)
-        if event_one != []:
+        if event_one:
             for g, item in enumerate(event_one):
                 entity_start = list(find_all(text_one, item['entity']))  # [8,12]
                 type2id = get_index(item['type'])  # 13
                 for t in range(len(entity_start)):
                     count_a = 0
                     for z in range(entity_start[t], len(item['entity']) + entity_start[t]):
-                        if label[z] == 612 and count_a == 0:
+                        if count_a == 0:
                             label[z] = type2id + 103
                             count_a += 1
-                        elif label[z] == 612 and count_a != 0:
+                        else:
                             label[z] = type2id
-
-                        elif 102 < label[z] < 206 and count_a == 0:
-                            label[z] = label[z] + type2id + 305
-                            count_a += 1
-
-                        elif label[z] < 103 and count_a != 0:
-                            label[z] = label[z] + type2id + 205
-                            count_a += 1
-
         labels.append(label)
 
     data = token.batch_encode_plus(
@@ -279,8 +310,8 @@ def collate_fn(data):
     for i in range(len(labels)):
         # x = len(labels[i])
         # bb = text[i]
-        labels[i] = [613] + labels[i]
-        labels[i] += [613] * lens
+        labels[i] = [207] + labels[i]
+        labels[i] += [207] * lens
         labels[i] = labels[i][:lens]
         # cc = characters_list[i]
         # if labels[i][0] != 207:
@@ -301,22 +332,24 @@ def collate_fn(data):
 
 # batchsize不能太大，明白了，数据太少了，刚才的数据被drop_last丢掉了
 train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
-                                           batch_size=16,
+                                           batch_size=8,
                                            collate_fn=collate_fn,
                                            shuffle=True,
                                            drop_last=False)
 
 val_loader = torch.utils.data.DataLoader(dataset=val_dataset,
-                                         batch_size=16,
+                                         batch_size=8,
                                          collate_fn=collate_fn,
                                          shuffle=True,
                                          drop_last=False)
 
-test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
-                                          batch_size=32,
-                                          collate_fn=collate_fn,
-                                          shuffle=False,
-                                          drop_last=False)
+# test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
+#                                           batch_size=64,
+#                                           collate_fn=collate_fn,
+#                                           shuffle=False,
+#                                           drop_last=False)
+
+model.load_state_dict(torch.load('best_12.pt'))
 
 
 def train_model(learning_rate, num_epochs):
@@ -361,8 +394,8 @@ def train_model(learning_rate, num_epochs):
                 predicted_labels = out
                 for j in range(len(labels)):
                     true_label = labels[j].tolist()
-                    t_first_index = true_label.index(613)
-                    t_second_index = true_label.index(613, t_first_index + 1)
+                    t_first_index = true_label.index(207)
+                    t_second_index = true_label.index(207, t_first_index + 1)
                     t_modified_label = true_label[t_first_index:t_second_index + 1]
                     true_labels.append(t_modified_label)
 
@@ -370,7 +403,7 @@ def train_model(learning_rate, num_epochs):
                     list3 = []
                     list4 = []
                     for m, n in zip(z, j):
-                        if m != 612 or n != 612:
+                        if m != 206 or n != 206:
                             list3.append(m)
                             list4.append(n)
                     list5.append(list3)
@@ -381,9 +414,9 @@ def train_model(learning_rate, num_epochs):
 
                 # accuracy = accuracy_score(true_labels, predicted_labels)
 
-                precision = precision_score(y_true, y_pred, average='macro')
-                recall = recall_score(y_true, y_pred, average='macro')
-                f1 = f1_score(y_true, y_pred, average='macro')
+                precision = precision_score(y_true, y_pred, average='micro')
+                recall = recall_score(y_true, y_pred, average='micro')
+                f1 = f1_score(y_true, y_pred, average='micro')
 
                 train_loss += loss.item()
                 train_f1 += f1
@@ -392,7 +425,7 @@ def train_model(learning_rate, num_epochs):
                 train_count += 1
                 # print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
                 print(
-                    f"第{epoch + 1}周期：第{i + 1}轮训练, loss：{loss.item()}, 第{i + 1}轮训练集F1准确率为:{f1},第{i + 1}轮训练集precision:{precision},第{i + 1}轮训练集recall:{recall}")
+                    f"第{epoch + 1}周期：第{i + 1}轮训练, loss：{loss.item()}, F1:{f1},precision:{precision},recall:{recall}")
 
             train_loss /= train_count
             train_f1 /= train_count
@@ -400,7 +433,7 @@ def train_model(learning_rate, num_epochs):
             train_recall /= train_count
 
             print(
-                f"----------第{epoch + 1}周期,loss为{train_loss},总训练集F1为{train_f1},总precision为{train_precision}，总recall为{train_recall}------------")
+                f"----------总第{epoch + 1}周期,loss为{train_loss},训练集F1为{train_f1},precision为{train_precision}，recall为{train_recall}------------")
 
             # 验证
             model.eval()
@@ -433,8 +466,8 @@ def train_model(learning_rate, num_epochs):
                     predicted_labels = out
                     for j in range(len(labels)):
                         true_label = labels[j].tolist()
-                        t_first_index = true_label.index(613)
-                        t_second_index = true_label.index(613, t_first_index + 1)
+                        t_first_index = true_label.index(207)
+                        t_second_index = true_label.index(207, t_first_index + 1)
                         t_modified_label = true_label[t_first_index:t_second_index + 1]
                         true_labels.append(t_modified_label)
 
@@ -442,7 +475,7 @@ def train_model(learning_rate, num_epochs):
                         list3 = []
                         list4 = []
                         for m, n in zip(z, j):
-                            if m != 612 or n != 612:
+                            if m != 206 or n != 206:
                                 list3.append(m)
                                 list4.append(n)
                         list5.append(list3)
@@ -451,9 +484,9 @@ def train_model(learning_rate, num_epochs):
                     y_true = [label for sublist in list6 for label in sublist]
                     y_pred = [label for sublist in list5 for label in sublist]
                     # accuracy = accuracy_score(true_labels, predicted_labels)
-                    precision = precision_score(y_true, y_pred, average='macro')
-                    recall = recall_score(y_true, y_pred, average='macro')
-                    f1 = f1_score(y_true, y_pred, average='macro')
+                    precision = precision_score(y_true, y_pred, average='micro')
+                    recall = recall_score(y_true, y_pred, average='micro')
+                    f1 = f1_score(y_true, y_pred, average='micro')
 
                     val_loss += loss.item()
                     val_f1 += f1
@@ -462,7 +495,7 @@ def train_model(learning_rate, num_epochs):
                     val_count += 1
                     # print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
                     print(
-                        f"第{epoch + 1}周期：第{i + 1}轮验证, loss：{loss.item()}, 第{i + 1}轮验证集F1准确率为:{f1},第{i + 1}轮验证集precision:{precision},第{i + 1}轮训练集recall:{recall}")
+                        f"第{epoch + 1}周期：第{i + 1}轮验证, loss：{loss.item()}, F1:{f1},precision:{precision},recall:{recall}")
 
                 val_loss /= val_count
                 val_f1 /= val_count
@@ -470,12 +503,12 @@ def train_model(learning_rate, num_epochs):
                 val_recall /= val_count
 
                 print(
-                    f"----------第{epoch + 1}周期,loss为{val_loss},总验证集F1为{val_f1},总precision为{val_precision}，总recall为{val_recall}------------")
+                    f"----------总第{epoch + 1}周期,loss为{val_loss},F1为{val_f1},precision为{val_precision}，recall为{val_recall}------------")
 
             if val_f1 > best_val_f1:
                 best_val_f1 = val_f1
                 best_model_state = model.state_dict()
-                torch.save(model.state_dict(), "best_6.pt")
+                torch.save(model.state_dict(), "best_13.pt")
                 counter = 0
             else:
                 counter += 1
@@ -497,12 +530,12 @@ def train_model(learning_rate, num_epochs):
         print(f"当前模型已保存到：{model_save_path}")
 
 
-learning_rate = 5e-4
-num_epochs = 10
+learning_rate = 1e-5
+num_epochs = 3
 
 test_f1, model_x = train_model(learning_rate, num_epochs)
 
-model_save_path = "6.pth"
+model_save_path = "13.pth"
 torch.save(model_x, model_save_path)
 print(f"使用指定的超参数训练的模型已保存到：{model_save_path}")
 print(test_f1)

@@ -14,6 +14,7 @@ import warnings
 import torch.nn.functional as F
 import jsonlines
 import regex
+import random
 
 warnings.filterwarnings("ignore")
 
@@ -65,16 +66,40 @@ class Dataset(data.Dataset):
         text = item['text']
         events = item['events']
 
-        #过滤掉events为空的数据
+        # 过滤掉events为空的数据
         if events == []:
             return None
 
         return text_id, text, events
 
 
+class Dataset1(data.Dataset):
+    def __init__(self, filename):
+        with jsonlines.open(filename, 'r') as f:
+            self.data = list(f)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index):
+        item = self.data[index]
+
+        text_id = item['text_id']
+        text = item['text']
+        events = item['events']
+
+        return text_id, text, events
+
+
+# b_train_dataset = Dataset1('random_train.jsonl')
+# b_val_dataset = Dataset1('random_val.jsonl')
 train_dataset = Dataset('train.jsonl')
 val_dataset = Dataset('dev.jsonl')
-test_dataset = Dataset('testA.jsonl')
+da_train = Dataset('da_train.jsonl')
+# test_dataset = Dataset('testA.jsonl')
+# b_train_dataset = [item for item in b_train_dataset]
+# b_val_dataset = [item for item in b_val_dataset]
+da_train=[item for item in da_train]
 train_dataset = [item for item in train_dataset if item is not None]
 val_dataset = [item for item in val_dataset if item is not None]
 
@@ -133,34 +158,49 @@ for text_id, text, events in val_dataset:
 val_dataset = [x for x in val_dataset if x not in filtered_val_dataset]
 
 
-def count_entity_occurrences(text, entity):
-    count = 0
-    start_index = 0
-    while True:
-        index = text.find(entity, start_index)
-        if index == -1:
-            break
-        count += 1
-        start_index = index + 1
-    return count
+# def count_entity_occurrences(text, entity):
+#     count = 0
+#     start_index = 0
+#     while True:
+#         index = text.find(entity, start_index)
+#         if index == -1:
+#             break
+#         count += 1
+#         start_index = index + 1
+#     return count
+#
+#
+# def filter_dataset(dataset):
+#     filtered_dataset = []
+#     for text_id, text, events in dataset:
+#         entities = set(event['entity'] for event in events)
+#         for entity in entities:
+#             entity_count = count_entity_occurrences(text, entity)
+#             if entity_count == 2:
+#                 filtered_dataset.append((text_id, text, events))
+#                 break
+#     return filtered_dataset
 
 
-def filter_dataset(dataset):
-    filtered_dataset = []
-    for text_id, text, events in dataset:
-        entities = set(event['entity'] for event in events)
-        for entity in entities:
-            entity_count = count_entity_occurrences(text, entity)
-            if entity_count == 2:
-                filtered_dataset.append((text_id, text, events))
-                break
-    return filtered_dataset
+# quchong_train_dataset = filter_dataset(train_dataset)
+# quchong_val_dataset = filter_dataset(val_dataset)
+# train_dataset = [x for x in train_dataset if x not in quchong_train_dataset]
+# val_dataset = [x for x in val_dataset if x not in quchong_val_dataset]
 
 
-quchong_train_dataset = filter_dataset(train_dataset)
-quchong_val_dataset = filter_dataset(val_dataset)
-train_dataset = [x for x in train_dataset if x not in quchong_train_dataset]
-val_dataset = [x for x in val_dataset if x not in quchong_val_dataset]
+def filter_empty_events(dd):
+    add_0_dataset = [item for item in dd if item[2] == []]
+    return add_0_dataset
+
+
+# train_0_dataset = filter_empty_events(b_train_dataset)
+# val_0_dataset = filter_empty_events(b_val_dataset)
+# random_train = random.sample(train_0_dataset, 30000)
+# random_val = random.sample(val_0_dataset, 3000)
+# train_dataset.extend(random_train)
+# val_dataset.extend(random_val)
+train_dataset.extend(da_train)
+
 
 token = AutoTokenizer.from_pretrained("bert-base-chinese")
 
@@ -301,22 +341,24 @@ def collate_fn(data):
 
 # batchsize不能太大，明白了，数据太少了，刚才的数据被drop_last丢掉了
 train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
-                                           batch_size=16,
+                                           batch_size=8,
                                            collate_fn=collate_fn,
                                            shuffle=True,
                                            drop_last=False)
 
 val_loader = torch.utils.data.DataLoader(dataset=val_dataset,
-                                         batch_size=16,
+                                         batch_size=8,
                                          collate_fn=collate_fn,
                                          shuffle=True,
                                          drop_last=False)
 
-test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
-                                          batch_size=32,
-                                          collate_fn=collate_fn,
-                                          shuffle=False,
-                                          drop_last=False)
+# test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
+#                                           batch_size=32,
+#                                           collate_fn=collate_fn,
+#                                           shuffle=False,
+#                                           drop_last=False)
+
+model.load_state_dict(torch.load('best_4.pt'))
 
 
 def train_model(learning_rate, num_epochs):
@@ -475,7 +517,7 @@ def train_model(learning_rate, num_epochs):
             if val_f1 > best_val_f1:
                 best_val_f1 = val_f1
                 best_model_state = model.state_dict()
-                torch.save(model.state_dict(), "best_6.pt")
+                torch.save(model.state_dict(), "best_14.pt")
                 counter = 0
             else:
                 counter += 1
@@ -497,12 +539,12 @@ def train_model(learning_rate, num_epochs):
         print(f"当前模型已保存到：{model_save_path}")
 
 
-learning_rate = 5e-4
-num_epochs = 10
+learning_rate = 1e-5
+num_epochs = 2
 
 test_f1, model_x = train_model(learning_rate, num_epochs)
 
-model_save_path = "6.pth"
+model_save_path = "14.pth"
 torch.save(model_x, model_save_path)
 print(f"使用指定的超参数训练的模型已保存到：{model_save_path}")
 print(test_f1)

@@ -2,6 +2,7 @@ import re
 import unicodedata
 import numpy as np
 import torch
+from TorchCRF import CRF
 from sklearn.preprocessing import MultiLabelBinarizer
 from torch import nn
 from transformers import AutoModel, AutoTokenizer
@@ -31,14 +32,16 @@ class Model(torch.nn.Module):
         for param in self.pretrained.parameters():
             param.requires_grad_(False)
         self.lstm = nn.LSTM(768, 384, num_layers=2, batch_first=True, bidirectional=True)
-        self.rfc = nn.Linear(768, 105)
+        self.cc = nn.Linear(768, 208)
+        # self.dropout = nn.Dropout(0.5)  # 添加dropout层
+        self.crf = CRF(208)  # 添加CRF层
 
     def forward(self, input_ids, attention_mask):
         out = self.pretrained(input_ids=input_ids, attention_mask=attention_mask)
-        out = out.last_hidden_state  # Keep the last hidden state for all positions
+        out = out.last_hidden_state
         out, _ = self.lstm(out)
-        out = self.rfc(out)
-        # out = F.softmax(out, dim=-1)
+        # out = self.dropout(out)  # 应用dropout层
+        out = self.cc(out)
         return out
 
 
@@ -60,36 +63,16 @@ class Dataset(data.Dataset):
 
         text_id = item['text_id']
         text = item['text']
-        events = item['events']
+        # events = item['events']
 
         # 过滤掉events为空的数据
-        if events == []:
-            return None
-
-        return text_id, text, events
-
-
-class Dataset1(data.Dataset):
-    def __init__(self, filename):
-        with jsonlines.open(filename, 'r') as f:
-            self.data = list(f)
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, index):
-        item = self.data[index]
-
-        text_id = item['text_id']
-        text = item['text']
+        # if events == []:
+        #     return None
 
         return text_id, text
 
 
-val_dataset = Dataset('dev.jsonl')
-test_dataset = Dataset1('testA.jsonl')
-
-val_dataset = [item for item in val_dataset if item is not None]
+test_dataset = Dataset('testA.jsonl')
 
 token = AutoTokenizer.from_pretrained("bert-base-chinese")
 
@@ -109,11 +92,6 @@ type_list = ['公司注销', '高层涉嫌违法', '高层变更', '关闭分支
              '分支机构被警方调查', '骗保', '监管评级下调', '财务报表更正', '否定意见', '自然灾害', '行业排名下降',
              '限制股东权利', '股权查封', '签订对赌协议', '审计师辞任', '股权融资失败', '停止批准增设分支机构',
              '薪酬福利下降', '误操作', '授信额度减少', '经营资质瑕疵']
-
-
-def get_type(index):
-    if index < len(type_list):
-        return type_list[index]
 
 
 def remove_unrecognized_unicode(text):
@@ -151,45 +129,6 @@ def find_all(text, sub):
         start += len(sub)
 
 
-def generate_lists(lst):
-    list1 = []
-    list2 = []
-
-    current_num = lst[0]
-    start_index = 0
-    a = 0
-    for i in range(1, len(lst)):
-        if lst[i] != current_num:
-            list1.append(current_num)
-            list2.append([start_index - 1, i - 2])
-            current_num = lst[i]
-            start_index = i
-
-    # 处理最后一个数字
-    list1.append(current_num)
-    list2.append([start_index - 1, len(lst) - 2])
-    list1, list2 = remove_greater_than_102(list1, list2)
-    return list1, list2
-
-
-def remove_greater_than_102(list1, list2):
-    new_list1 = []
-    new_list2 = []
-
-    for i in range(len(list1)):
-        if list1[i] <= 102:
-            new_list1.append(list1[i])
-            new_list2.append(list2[i])
-
-    return new_list1, new_list2
-
-
-def get_substring(text, indices):
-    start_index, end_index = indices
-    substring = text[start_index:end_index + 1]
-    return substring
-
-
 def custom_encoder(obj):
     if isinstance(obj, set):
         return list(obj)
@@ -212,16 +151,16 @@ def collate_fn(data):
     for i in data:
         text_id.append(i[0])
         text_one = i[1]
+        text.append(i[1])
         # event_one = i[2]
         # events.append(i[2])
         text_one = re.sub(r'[ \u3000\xa0\u2002\u2003�]+', '', text_one)
         text_one = remove_unrecognized_unicode(text_one)
-        text.append(text_one)
         characters = [char for char in text_one]
         # 恶心死我了
         if len(text_one) > 510:
             text_one = text_one[:510]
-        # len_text = len(text_one)
+        len_text = len(text_one)
 
         # label = [206] * len_text
 
@@ -233,7 +172,7 @@ def collate_fn(data):
         #         for t in range(len(entity_start)):
         #             count_a = 0
         #             for z in range(entity_start[t], len(item['entity']) + entity_start[t]):
-        #                 if label[z] == 206 and count_a == 0:
+        #                 if count_a == 0:
         #                     label[z] = type2id + 103
         #                     count_a += 1
         #                 else:
@@ -250,19 +189,19 @@ def collate_fn(data):
         is_split_into_words=True,
         return_length=True)
 
-    # lens = data['input_ids'].shape[1]
+    lens = data['input_ids'].shape[1]
 
-    # for i in range(len(labels)):
-    #     # x = len(labels[i])
-    #     # bb = text[i]
-    #     labels[i] = [207] + labels[i]
-    #     labels[i] += [207] * lens
-    #     labels[i] = labels[i][:lens]
-    #     # cc = characters_list[i]
-    #     # if labels[i][0] != 207:
-    #     #     print(f"在序列{i}的开头没有加[207]")
-    #     # if labels[i][x + 1] != 207:
-    #     #     print(f"在序列{i}的结尾没有加[207]")
+    for i in range(len(labels)):
+        # x = len(labels[i])
+        # bb = text[i]
+        labels[i] = [207] + labels[i]
+        labels[i] += [207] * lens
+        labels[i] = labels[i][:lens]
+        # cc = characters_list[i]
+        # if labels[i][0] != 207:
+        #     print(f"在序列{i}的开头没有加[207]")
+        # if labels[i][x + 1] != 207:
+        #     print(f"在序列{i}的结尾没有加[207]")
 
     input_ids = data['input_ids'].to(device)
     attention_mask = data['attention_mask'].to(device)
@@ -272,13 +211,9 @@ def collate_fn(data):
     #         labels_tensor[i][j][label] = 1
     # labels = torch.LongTensor(labels).to(device)
 
-    return input_ids, attention_mask, text_id, text
+    return input_ids, attention_mask, text_id
 
-val_loader = torch.utils.data.DataLoader(dataset=val_dataset,
-                                         batch_size=64,
-                                         collate_fn=collate_fn,
-                                         shuffle=False,
-                                         drop_last=False)
+
 
 test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
                                           batch_size=64,
@@ -286,7 +221,7 @@ test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
                                           shuffle=False,
                                           drop_last=False)
 
-model.load_state_dict(torch.load('early_2.pt'))
+model.load_state_dict(torch.load('early_3.pt'))
 criterion = torch.nn.CrossEntropyLoss()
 model.eval()
 val_loss = 0
@@ -299,30 +234,19 @@ p_list = []
 t_list = []
 c_list = []
 with torch.no_grad():
-    for i, (input_ids, attention_mask, text_ids, texts) in enumerate(test_loader):
+    for i, (input_ids, attention_mask, text_id) in enumerate(test_loader):
 
         out = model(input_ids=input_ids, attention_mask=attention_mask)
 
-        out = torch.argmax(out, dim=2)
+        out = model.module.crf.viterbi_decode(out, attention_mask.to(torch.bool))
+        # out = torch.argmax(out, dim=2)
         # out = torch.where(out > threshold, torch.ones_like(out), torch.zeros_like(out))
-        predicted_labels = []
-        true_labels = []
 
-        for j in range(len(out)):
-            predicted_label = out[j].tolist()
-            text_id_one = text_ids[j]
-            text_events = texts[j]
-            # predicted_labels.append(predicted_label)
-            t_modified_label = predicted_label[0:len(text_events)+2]
-            new_p = [num - 103 if num >= 103 else num for num in t_modified_label]
-            # {"type":"被列为失信被执行人" ,"entity":"播州城投"}
-            list3, list4 = generate_lists(new_p)
-            b_list = []
-            for t in range(len(list3)):
-                a_list = {"type": get_type(list3[t]), "entity": get_substring(text_events, list4[t])}
-                b_list.append(a_list)
-            # {"text_id": "123456", "events":[]}
-            c_list.append({"text_id": text_id_one, "events": b_list})
+        predicted_labels = out
 
-filename = 'result.txt'
+        for gg in range(len(out)):
+            yy_list = {"text_id": text_id[gg], "labels": predicted_labels[gg]}
+            c_list.append(yy_list)
+
+filename = 'result_3.txt'
 save_list_to_txt(c_list)

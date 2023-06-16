@@ -2,6 +2,7 @@ import re
 import unicodedata
 import numpy as np
 import torch
+from TorchCRF import CRF
 from sklearn.preprocessing import MultiLabelBinarizer
 from torch import nn
 from transformers import AutoModel, AutoTokenizer
@@ -31,14 +32,16 @@ class Model(torch.nn.Module):
         for param in self.pretrained.parameters():
             param.requires_grad_(False)
         self.lstm = nn.LSTM(768, 384, num_layers=2, batch_first=True, bidirectional=True)
-        self.rfc = nn.Linear(768, 105)
+        self.cc = nn.Linear(768, 208)
+        # self.dropout = nn.Dropout(0.5)  # 添加dropout层
+        self.crf = CRF(208)  # 添加CRF层
 
     def forward(self, input_ids, attention_mask):
         out = self.pretrained(input_ids=input_ids, attention_mask=attention_mask)
-        out = out.last_hidden_state  # Keep the last hidden state for all positions
+        out = out.last_hidden_state
         out, _ = self.lstm(out)
-        out = self.rfc(out)
-        # out = F.softmax(out, dim=-1)
+        # out = self.dropout(out)  # 应用dropout层
+        out = self.cc(out)
         return out
 
 
@@ -86,11 +89,38 @@ class Dataset1(data.Dataset):
         return text_id, text
 
 
+train_dataset = Dataset('train.jsonl')
 val_dataset = Dataset('dev.jsonl')
 test_dataset = Dataset1('testA.jsonl')
-
+train_dataset = [item for item in train_dataset if item is not None]
 val_dataset = [item for item in val_dataset if item is not None]
+entity_counts = {}
+filtered_train_dataset = []
 
+for text_id, text, events in train_dataset:
+    entity_dict = {}
+    for event in events:
+        entity = event['entity']
+        event_type = event['type']
+        if entity in entity_dict:
+            entity_dict[entity].add(event_type)
+        else:
+            entity_dict[entity] = {event_type}
+
+    has_different_event_types = False
+    for entity, event_types in entity_dict.items():
+        num_event_types = len(event_types)
+        if num_event_types > 2:
+            has_different_event_types = True
+            if num_event_types in entity_counts:
+                entity_counts[num_event_types] += 1
+            else:
+                entity_counts[num_event_types] = 1
+
+    if has_different_event_types:
+        filtered_train_dataset.append((text_id, text, events))
+
+train_dataset = [x for x in train_dataset if x not in filtered_train_dataset]
 token = AutoTokenizer.from_pretrained("bert-base-chinese")
 
 type_list = ['公司注销', '高层涉嫌违法', '高层变更', '关闭分支机构', '吊销资质牌照', '经营期限到期', '造假欺诈',
@@ -274,6 +304,11 @@ def collate_fn(data):
 
     return input_ids, attention_mask, text_id, text
 
+train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
+                                         batch_size=64,
+                                         collate_fn=collate_fn,
+                                         shuffle=False,
+                                         drop_last=False)
 val_loader = torch.utils.data.DataLoader(dataset=val_dataset,
                                          batch_size=64,
                                          collate_fn=collate_fn,
@@ -286,7 +321,7 @@ test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
                                           shuffle=False,
                                           drop_last=False)
 
-model.load_state_dict(torch.load('early_2.pt'))
+model.load_state_dict(torch.load('best_8.pt'))
 criterion = torch.nn.CrossEntropyLoss()
 model.eval()
 val_loss = 0
@@ -298,31 +333,31 @@ val_precision = 0
 p_list = []
 t_list = []
 c_list = []
+a=0
 with torch.no_grad():
-    for i, (input_ids, attention_mask, text_ids, texts) in enumerate(test_loader):
+    for i, (input_ids, attention_mask, text_ids, texts) in enumerate(train_loader):
 
         out = model(input_ids=input_ids, attention_mask=attention_mask)
 
-        out = torch.argmax(out, dim=2)
+        out = model.module.crf.viterbi_decode(out, attention_mask.to(torch.bool))
         # out = torch.where(out > threshold, torch.ones_like(out), torch.zeros_like(out))
-        predicted_labels = []
-        true_labels = []
-
-        for j in range(len(out)):
-            predicted_label = out[j].tolist()
+        predicted_labels = out
+        for j, predicted_label in enumerate(out):
             text_id_one = text_ids[j]
             text_events = texts[j]
             # predicted_labels.append(predicted_label)
-            t_modified_label = predicted_label[0:len(text_events)+2]
+            t_modified_label = predicted_label[0:len(text_events) + 2]
             new_p = [num - 103 if num >= 103 else num for num in t_modified_label]
             # {"type":"被列为失信被执行人" ,"entity":"播州城投"}
             list3, list4 = generate_lists(new_p)
             b_list = []
             for t in range(len(list3)):
                 a_list = {"type": get_type(list3[t]), "entity": get_substring(text_events, list4[t])}
-                b_list.append(a_list)
+                if a_list not in b_list:
+                    b_list.append(a_list)
             # {"text_id": "123456", "events":[]}
             c_list.append({"text_id": text_id_one, "events": b_list})
-
-filename = 'result.txt'
+            a += 1
+            print(a)
+filename = 'result_t.txt'
 save_list_to_txt(c_list)

@@ -14,6 +14,7 @@ import warnings
 import torch.nn.functional as F
 import jsonlines
 import regex
+
 warnings.filterwarnings("ignore")
 
 print(torch.__version__)
@@ -21,6 +22,7 @@ print(torch.__version__)
 device_ids = [0, 1]
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print('device=', device)
+
 
 class Model(torch.nn.Module):
     def __init__(self):
@@ -79,7 +81,7 @@ val_dataset = [item for item in val_dataset if item is not None]
 entity_counts = {}
 filtered_train_dataset = []
 
-for _, _, events in train_dataset:
+for text_id, text, events in train_dataset:
     entity_dict = {}
     for event in events:
         entity = event['entity']
@@ -100,9 +102,65 @@ for _, _, events in train_dataset:
                 entity_counts[num_event_types] = 1
 
     if has_different_event_types:
-        filtered_train_dataset.append((_, _, events))
+        filtered_train_dataset.append((text_id, text, events))
 
 train_dataset = [x for x in train_dataset if x not in filtered_train_dataset]
+
+entity_counts_val = {}
+filtered_val_dataset = []
+for text_id, text, events in val_dataset:
+    entity_dict = {}
+    for event in events:
+        entity = event['entity']
+        event_type = event['type']
+        if entity in entity_dict:
+            entity_dict[entity].add(event_type)
+        else:
+            entity_dict[entity] = {event_type}
+
+    has_different_event_types = False
+    for entity, event_types in entity_dict.items():
+        num_event_types = len(event_types)
+        if num_event_types > 1:
+            has_different_event_types = True
+            if num_event_types in entity_counts_val:
+                entity_counts_val[num_event_types] += 1
+            else:
+                entity_counts_val[num_event_types] = 1
+
+    if has_different_event_types:
+        filtered_val_dataset.append((text_id, text, events))
+val_dataset = [x for x in val_dataset if x not in filtered_val_dataset]
+
+
+def count_entity_occurrences(text, entity):
+    count = 0
+    start_index = 0
+    while True:
+        index = text.find(entity, start_index)
+        if index == -1:
+            break
+        count += 1
+        start_index = index + 1
+    return count
+
+
+def filter_dataset(dataset):
+    filtered_dataset = []
+    for text_id, text, events in dataset:
+        entities = set(event['entity'] for event in events)
+        for entity in entities:
+            entity_count = count_entity_occurrences(text, entity)
+            if entity_count == 2:
+                filtered_dataset.append((text_id, text, events))
+                break
+    return filtered_dataset
+
+
+quchong_train_dataset = filter_dataset(train_dataset)
+quchong_val_dataset = filter_dataset(val_dataset)
+train_dataset = [x for x in train_dataset if x not in quchong_train_dataset]
+val_dataset = [x for x in val_dataset if x not in quchong_val_dataset]
 
 token = AutoTokenizer.from_pretrained("bert-base-chinese")
 
@@ -325,7 +383,7 @@ def train_model(learning_rate, num_epochs):
                 train_count += 1
                 # print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
                 print(
-                    f"第{epoch + 1}周期：第{i + 1}轮训练, loss：{loss.item()}, 第{i + 1}轮训练集F1准确率为:{f1},第{i + 1}轮训练集precision:{precision},第{i + 1}轮训练集recall:{recall}")
+                    f"第{epoch + 1}周期：第{i + 1}轮训练, loss：{loss.item()}, F1:{f1},precision:{precision},recall:{recall}")
 
             train_loss /= train_count
             train_f1 /= train_count
@@ -333,7 +391,7 @@ def train_model(learning_rate, num_epochs):
             train_recall /= train_count
 
             print(
-                f"----------第{epoch + 1}周期,loss为{train_loss},总训练集F1为{train_f1},总precision为{train_precision}，总recall为{train_recall}------------")
+                f"----------总第{epoch + 1}周期,loss为{train_loss},训练集F1为{train_f1},precision为{train_precision}，recall为{train_recall}------------")
 
             # 验证
             model.eval()
@@ -353,7 +411,7 @@ def train_model(learning_rate, num_epochs):
                     # out_z, labels_z = reshape_and_remove_pad(out, labels, attention_mask)
 
                     loss = -model.module.crf(out, labels, attention_mask.to(torch.bool))
-                    loss = loss.sum() / train_loader.batch_size
+                    loss = loss.sum() / val_loader.batch_size
 
                     out = model.module.crf.viterbi_decode(out, attention_mask.to(torch.bool))
                     # out = torch.argmax(out, dim=2)
@@ -395,7 +453,7 @@ def train_model(learning_rate, num_epochs):
                     val_count += 1
                     # print(f"predicted_labels：{predicted_labels}", '\n', f"true_labels：{true_labels}")
                     print(
-                        f"第{epoch + 1}周期：第{i + 1}轮验证, loss：{loss.item()}, 第{i + 1}轮验证集F1准确率为:{f1},第{i + 1}轮验证集precision:{precision},第{i + 1}轮训练集recall:{recall}")
+                        f"第{epoch + 1}周期：第{i + 1}轮验证, loss：{loss.item()}, F1:{f1},precision:{precision},recall:{recall}")
 
                 val_loss /= val_count
                 val_f1 /= val_count
@@ -403,12 +461,12 @@ def train_model(learning_rate, num_epochs):
                 val_recall /= val_count
 
                 print(
-                    f"----------第{epoch + 1}周期,loss为{val_loss},总验证集F1为{val_f1},总precision为{val_precision}，总recall为{val_recall}------------")
+                    f"----------总第{epoch + 1}周期,loss为{val_loss},F1为{val_f1},precision为{val_precision}，recall为{val_recall}------------")
 
             if val_f1 > best_val_f1:
                 best_val_f1 = val_f1
                 best_model_state = model.state_dict()
-                torch.save(model.state_dict(), "best_1.pt")
+                torch.save(model.state_dict(), "best_8.pt")
                 counter = 0
             else:
                 counter += 1
@@ -435,7 +493,7 @@ num_epochs = 100
 
 test_f1, model_x = train_model(learning_rate, num_epochs)
 
-model_save_path = "3.pth"
+model_save_path = "8.pth"
 torch.save(model_x, model_save_path)
 print(f"使用指定的超参数训练的模型已保存到：{model_save_path}")
 print(test_f1)

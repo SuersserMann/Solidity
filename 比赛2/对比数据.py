@@ -4,7 +4,7 @@ import jsonlines
 text_ids_list = []
 
 # 读取txt文件，获取text_id列表
-with open('val_result_去重.txt', 'r', encoding='utf-8') as file:
+with open('result_v.txt', 'r', encoding='utf-8') as file:
     for line in file:
         data = json.loads(line.strip())
         text_id = data["text_id"]
@@ -21,17 +21,18 @@ with jsonlines.open('dev.jsonl', 'r') as reader:
                 writer.write(json.dumps(item, ensure_ascii=False) + '\n')
 
 # 打印或保存不完全相等的数据到filtered_data.txt
-with open('val_result_去重.txt', 'r', encoding='utf-8') as file1, open('filtered_data.txt', 'r', encoding='utf-8') as file2:
+with open('result_v.txt', 'r', encoding='utf-8') as file1, open('filtered_data.txt', 'r', encoding='utf-8') as file2:
     original_data = [json.loads(line) for line in file1]
     filtered_data = [json.loads(line) for line in file2]
 
 different_events_data = []
 for original_item, filtered_item in zip(original_data, filtered_data):
-    original_events = original_item['events']
-    filtered_events = filtered_item['events']
+    original_events = sorted(original_item['events'], key=lambda x: json.dumps(x, sort_keys=True))
+    filtered_events = sorted(filtered_item['events'], key=lambda x: json.dumps(x, sort_keys=True))
     if original_events != filtered_events:
         different_events_data.append(filtered_item)
         different_events_data.append(original_item)
+        different_events_data.append('')
 
 # 将不完全相等的数据保存到filtered_data.txt文件
 with open('filtered_data.txt', 'w', encoding='utf-8') as file:
